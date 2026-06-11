@@ -66,12 +66,20 @@ def init_db() -> None:
         defaults = openai_defaults()
         for key, value in defaults.items():
             conn.execute(
-                "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                """
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
                 (f"openai.{key}", value, now_iso()),
             )
         for key, value in ytdlp_defaults().items():
             conn.execute(
-                "INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (?, ?, ?)",
+                """
+                INSERT INTO settings (key, value, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
                 (f"ytdlp.{key}", value, now_iso()),
             )
         task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}

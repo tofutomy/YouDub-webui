@@ -10,6 +10,10 @@ function apiProxyTarget() {
 
 const nextConfig: NextConfig = {
   allowedDevOrigins: ["172.27.2.90", "100.94.222.54"],
+  experimental: {
+    // 允许上传大视频文件（后端限制 4GB，这里设 500MB 给代理留余量）
+    proxyClientMaxBodySize: "2000mb",
+  },
   async rewrites() {
     return [
       {

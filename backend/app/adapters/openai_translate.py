@@ -93,6 +93,7 @@ def _call_json(client: OpenAI, model: str, system: str, user: str) -> dict[str, 
             {"role": "user", "content": user},
         ],
         temperature=0.2,
+        response_format={"type": "json_object"},
     )
     raw = response.choices[0].message.content or "{}"
     return _extract_json(raw)

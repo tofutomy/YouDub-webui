@@ -37,6 +37,7 @@ class TaskCreate(BaseModel):
     asr_language: str | None = None
     target_language: str | None = None
     add_subtitles: bool = True
+    asr_model: str | None = None
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -165,6 +166,7 @@ def create_task(payload: TaskCreate) -> dict:
         asr_language=payload.asr_language,
         target_language=payload.target_language,
         add_subtitles=payload.add_subtitles,
+        asr_model=payload.asr_model,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -204,6 +206,7 @@ def _save_uploaded_file(file: UploadFile, destination: Path) -> int:
 def upload_local_video(
     direction: str = Form("en-zh"),
     add_subtitles: bool = Form(True),
+    asr_model: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
@@ -229,6 +232,7 @@ def upload_local_video(
         asr_language=asr_language,
         target_language=target_language,
         add_subtitles=add_subtitles,
+        asr_model=asr_model or None,
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -238,6 +242,34 @@ def upload_local_video(
 @app.get("/api/tasks/current")
 def current_task() -> dict | None:
     return database.get_current_task()
+
+
+class TaskConfigUpdate(BaseModel):
+    asr_model: str | None = None
+    asr_language: str | None = None
+    target_language: str | None = None
+    add_subtitles: bool | None = None
+
+
+@app.patch("/api/tasks/{task_id}/config")
+def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task["status"] == "running":
+        raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
+    fields: dict[str, object] = {}
+    if payload.asr_model is not None:
+        fields["asr_model"] = payload.asr_model
+    if payload.asr_language is not None:
+        fields["asr_language"] = payload.asr_language
+    if payload.target_language is not None:
+        fields["target_language"] = payload.target_language
+    if payload.add_subtitles is not None:
+        fields["add_subtitles"] = int(payload.add_subtitles)
+    if fields:
+        database.update_task(task_id, **fields)
+    return database.get_task(task_id)
 
 
 @app.get("/api/tasks")
@@ -348,6 +380,62 @@ def rerun_single_stage(task_id: str, stage_name: str) -> dict:
     database.reset_single_stage_for_rerun(task_id, stage_name)
     run_task_single_stage(task_id, stage_name)
     return database.get_task(task_id)
+
+
+@app.post("/api/tasks/{task_id}/clear-stage/{stage_name}")
+def clear_stage_output(task_id: str, stage_name: str) -> dict:
+    from .stages import STAGE_NAMES
+
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task["status"] == "running":
+        raise HTTPException(status_code=409, detail="Cannot clear output of a running task.")
+    if stage_name not in STAGE_NAMES:
+        raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
+    _clear_stage_output(task, stage_name)
+    database.reset_single_stage_for_rerun(task_id, stage_name)
+    return database.get_task(task_id)
+
+
+def _clear_stage_output(task: dict, stage_name: str) -> None:
+    """Delete cached output files for a single stage so it actually re-runs."""
+    session_path = task.get("session_path")
+    if not session_path:
+        return
+    session = Path(session_path)
+    if not session.exists():
+        return
+
+    targets: list[Path] = []
+    if stage_name == "asr":
+        targets.append(session / "metadata" / "asr.json")
+    elif stage_name == "asr_fix":
+        targets.append(session / "metadata" / "asr_fixed.json")
+    elif stage_name == "translate":
+        for f in (session / "metadata").glob("translation.*.json"):
+            targets.append(f)
+        for f in (session / "metadata").glob("subtitles.*.srt"):
+            targets.append(f)
+    elif stage_name == "split_audio":
+        vocals_dir = session / "segments" / "vocals"
+        if vocals_dir.exists():
+            import shutil
+            shutil.rmtree(vocals_dir)
+    elif stage_name == "tts":
+        tts_dir = session / "segments" / "tts"
+        if tts_dir.exists():
+            import shutil
+            shutil.rmtree(tts_dir)
+    elif stage_name == "merge_audio":
+        targets.append(session / "tmp" / "audio_dubbing.wav")
+        targets.append(session / "metadata" / "timings.json")
+    elif stage_name == "merge_video":
+        targets.append(session / "media" / "video_final.mp4")
+
+    for p in targets:
+        if p.exists():
+            p.unlink()
 
 
 @app.get("/api/tasks/{task_id}/log", response_class=PlainTextResponse)

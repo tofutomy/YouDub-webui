@@ -290,12 +290,20 @@ class PipelineRunner:
 
     def _asr(self, task: dict) -> None:
         import json as _json
-        from .adapters.whisper_asr import recognize_speech
 
         session = _require(self.artifacts.session, "session")
         vocals_file = _require(self.artifacts.vocals_file, "vocals_file")
         source = get_source_for_task(task)
-        self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)
+
+        asr_model = task.get("asr_model") or ""
+        if asr_model.startswith("funasr:"):
+            from .adapters.funasr_asr import recognize_speech
+            model_id = asr_model.split(":", 1)[1] if ":" in asr_model else None
+            self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language, model_id=model_id)
+        else:
+            from .adapters.whisper_asr import recognize_speech
+            self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)
+
         data = _json.loads(self.artifacts.asr_file.read_text(encoding="utf-8"))
         utterances = data["result"]["utterances"]
         word_count = sum(len(u.get("words") or []) for u in utterances)

@@ -36,6 +36,10 @@ export type Task = {
   started_at: string | null
   completed_at: string | null
   stages: TaskStage[]
+  asr_model: string | null
+  asr_language: string | null
+  target_language: string | null
+  add_subtitles: number | null
 }
 
 export type CookieInfo = {
@@ -135,7 +139,23 @@ export function rerunSingleStage(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/rerun-single-stage/${stageName}`, { method: "POST" })
 }
 
-export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean) {
+export function updateTaskConfig(taskId: string, config: {
+  asr_model?: string
+  asr_language?: string
+  target_language?: string
+  add_subtitles?: boolean
+}) {
+  return request<Task>(`/api/tasks/${taskId}/config`, {
+    method: "PATCH",
+    body: JSON.stringify(config),
+  })
+}
+
+export function clearStageOutput(taskId: string, stageName: string) {
+  return request<Task>(`/api/tasks/${taskId}/clear-stage/${stageName}`, { method: "POST" })
+}
+
+export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string) {
   const body: Record<string, unknown> = { url }
   if (direction) {
     const parts = direction.split("-")
@@ -145,17 +165,23 @@ export function createTask(url: string, direction?: LocalDirection, addSubtitles
   if (addSubtitles !== undefined) {
     body.add_subtitles = addSubtitles
   }
+  if (asrModel) {
+    body.asr_model = asrModel
+  }
   return request<Task>("/api/tasks", {
     method: "POST",
     body: JSON.stringify(body),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean) {
+export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string) {
   const form = new FormData()
   form.append("direction", direction)
   if (addSubtitles !== undefined) {
     form.append("add_subtitles", String(addSubtitles))
+  }
+  if (asrModel) {
+    form.append("asr_model", asrModel)
   }
   form.append("file", file)
 

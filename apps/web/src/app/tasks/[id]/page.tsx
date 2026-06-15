@@ -6,11 +6,13 @@ import {
   CheckCircle2,
   Circle,
   Download,
+  Eraser,
   FileText,
   Info,
   Loader2,
   Play,
   RotateCw,
+  Settings,
   Trash2,
   XCircle,
 } from "lucide-react"
@@ -18,6 +20,7 @@ import {
 import {
   StageStatus,
   Task,
+  clearStageOutput,
   deleteTask,
   finalVideoDownloadUrl,
   finalVideoUrl,
@@ -27,6 +30,7 @@ import {
   rerunStage,
   rerunTask,
   resumeTask,
+  updateTaskConfig,
 } from "@/lib/api"
 import { useI18n, STAGE_INFO } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
@@ -51,6 +55,14 @@ import {
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Label } from "@/components/ui/label"
 
 function stageIcon(status: StageStatus) {
   if (status === "succeeded") return <CheckCircle2 className="size-5 text-[#00aeec]" />
@@ -107,6 +119,18 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [rerunSingleIng, setRerunSingleIng] = useState(false)
   const [rerunSingleError, setRerunSingleError] = useState("")
   const [infoStageTarget, setInfoStageTarget] = useState<string | null>(null)
+  const [configStageTarget, setConfigStageTarget] = useState<string | null>(null)
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configError, setConfigError] = useState("")
+  const [configSuccess, setConfigSuccess] = useState(false)
+  const [clearStageOpen, setClearStageOpen] = useState(false)
+  const [clearStageTarget, setClearStageTarget] = useState<string | null>(null)
+  const [clearingStage, setClearingStage] = useState(false)
+  const [clearStageError, setClearStageError] = useState("")
+  // Config form state
+  const [cfgAsrModel, setCfgAsrModel] = useState("")
+  const [cfgDirection, setCfgDirection] = useState<"en-zh" | "zh-en">("en-zh")
+  const [cfgAddSubtitles, setCfgAddSubtitles] = useState(true)
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -179,6 +203,68 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setRerunSingleError(err instanceof Error ? err.message : "Failed to rerun stage")
     } finally {
       setRerunSingleIng(false)
+    }
+  }
+
+  const openConfigDialog = (stageName: string) => {
+    setConfigStageTarget(stageName)
+    setConfigError("")
+    setConfigSuccess(false)
+    // Initialize form state from current task
+    if (task) {
+      setCfgAsrModel(task.asr_model || "")
+      const al = task.asr_language || "en"
+      const tl = task.target_language || "zh"
+      setCfgDirection(al === "zh" && tl === "en" ? "zh-en" : "en-zh")
+      setCfgAddSubtitles(task.add_subtitles !== 0)
+    }
+  }
+
+  const handleSaveConfig = async () => {
+    if (!configStageTarget || !task) return
+    setConfigSaving(true)
+    setConfigError("")
+    setConfigSuccess(false)
+    try {
+      const config: Record<string, unknown> = {}
+      if (configStageTarget === "asr") {
+        config.asr_model = cfgAsrModel || null
+      } else if (configStageTarget === "translate") {
+        const parts = cfgDirection.split("-")
+        config.asr_language = parts[0]
+        config.target_language = parts[1]
+      } else if (configStageTarget === "merge_video") {
+        config.add_subtitles = cfgAddSubtitles
+      }
+      const next = await updateTaskConfig(id, config as Parameters<typeof updateTaskConfig>[1])
+      setTask(next)
+      setConfigSuccess(true)
+    } catch (err) {
+      setConfigError(err instanceof Error ? err.message : t.task.stageConfigError)
+    } finally {
+      setConfigSaving(false)
+    }
+  }
+
+  const STAGE_CONFIG_MAP: Record<string, string[]> = {
+    asr: ["asr_model"],
+    translate: ["direction"],
+    merge_video: ["add_subtitles"],
+  }
+
+  const handleClearStage = async () => {
+    if (!clearStageTarget) return
+    setClearingStage(true)
+    setClearStageError("")
+    try {
+      const next = await clearStageOutput(id, clearStageTarget)
+      setClearStageOpen(false)
+      setClearStageTarget(null)
+      setTask(next)
+    } catch (err) {
+      setClearStageError(err instanceof Error ? err.message : t.task.clearStageError)
+    } finally {
+      setClearingStage(false)
     }
   }
 
@@ -327,6 +413,15 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                               <Info className="size-3.5" />
                             </button>
                           ) : null}
+                          {STAGE_CONFIG_MAP[stage.name] && canRerunStage ? (
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => openConfigDialog(stage.name)}
+                            >
+                              <Settings className="size-3.5" />
+                            </button>
+                          ) : null}
                           <Badge className={statusBadgeClass(stage.status)}>{statusLabel(stage.status)}</Badge>
                           {stage.started_at ? (
                             <span className="text-xs text-muted-foreground">
@@ -371,6 +466,18 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                           >
                             <RotateCw className="size-3" />
                             {t.task.rerunStage}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setClearStageTarget(stage.name)
+                              setClearStageOpen(true)
+                            }}
+                          >
+                            <Eraser className="size-3" />
+                            {t.task.clearStage}
                           </Button>
                         </div>
                       ) : null}
@@ -452,6 +559,31 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               </DialogContent>
             </Dialog>
 
+            <Dialog open={clearStageOpen} onOpenChange={setClearStageOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.task.clearStageTitle}</DialogTitle>
+                  <DialogDescription>
+                    {t.task.clearStageDescription}
+                  </DialogDescription>
+                </DialogHeader>
+                {clearStageError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {clearStageError}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={clearingStage} />}>
+                    {t.common.cancel}
+                  </DialogClose>
+                  <Button variant="destructive" onClick={handleClearStage} disabled={clearingStage}>
+                    {clearingStage ? <Loader2 className="size-4 animate-spin" /> : <Eraser className="size-4" />}
+                    {clearingStage ? t.common.loading : t.task.clearStage}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
             <Dialog open={!!infoStageTarget} onOpenChange={(open) => { if (!open) setInfoStageTarget(null) }}>
               <DialogContent>
                 <DialogHeader>
@@ -477,6 +609,74 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                   <DialogClose render={<Button variant="outline" />}>
                     {t.common.close}
                   </DialogClose>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!configStageTarget} onOpenChange={(open) => { if (!open) { setConfigStageTarget(null); setConfigSuccess(false) } }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.task.stageConfigTitle}</DialogTitle>
+                </DialogHeader>
+                {configStageTarget === "asr" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="cfg-asr-model">{t.home.asrModelLabel}</Label>
+                    <Select value={cfgAsrModel} onValueChange={(v) => setCfgAsrModel(v ?? "")}>
+                      <SelectTrigger id="cfg-asr-model" className="h-10">
+                        <SelectValue placeholder={t.home.asrWhisperTurbo} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">{t.home.asrWhisperTurbo}</SelectItem>
+                        <SelectItem value="whisper:large-v3">{t.home.asrWhisperLarge}</SelectItem>
+                        <SelectItem value="funasr:iic/SenseVoiceSmall">{t.home.asrSenseVoice}</SelectItem>
+                        <SelectItem value="funasr:FunAudioLLM/Fun-ASR-Nano-2512">{t.home.asrFunAsrNano}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+                {configStageTarget === "translate" ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="cfg-direction">{t.home.localDirectionLabel}</Label>
+                    <Select value={cfgDirection} onValueChange={(v) => setCfgDirection(v as "en-zh" | "zh-en")}>
+                      <SelectTrigger id="cfg-direction" className="h-10">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
+                        <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                ) : null}
+                {configStageTarget === "merge_video" ? (
+                  <label className="flex cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4 rounded border-gray-300"
+                      checked={cfgAddSubtitles}
+                      onChange={(e) => setCfgAddSubtitles(e.target.checked)}
+                    />
+                    {t.home.addSubtitles}
+                  </label>
+                ) : null}
+                {configError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {configError}
+                  </div>
+                ) : null}
+                {configSuccess ? (
+                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+                    {t.task.stageConfigSaved}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={configSaving} />}>
+                    {t.common.close}
+                  </DialogClose>
+                  <Button onClick={handleSaveConfig} disabled={configSaving}>
+                    {configSaving ? <Loader2 className="size-4 animate-spin" /> : null}
+                    {configSaving ? t.common.loading : t.settings.save}
+                  </Button>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

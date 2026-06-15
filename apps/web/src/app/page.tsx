@@ -33,6 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Separator } from "@/components/ui/separator"
 
 function isActive(status: string) {
   return status === "queued" || status === "running"
@@ -62,6 +63,7 @@ export default function Home() {
   const [localFile, setLocalFile] = useState<File | null>(null)
   const [direction, setDirection] = useState<LocalDirection>("en-zh")
   const [addSubtitles, setAddSubtitles] = useState(true)
+  const [asrModel, setAsrModel] = useState("")
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -104,8 +106,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-        ? await uploadLocalTask(localFile, direction, addSubtitles)
-        : await createTask(submittedUrl, direction, addSubtitles)
+        ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined)
+        : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -136,39 +138,49 @@ export default function Home() {
             <CardTitle>{t.home.createTitle}</CardTitle>
           </CardHeader>
           <CardContent>
-            <form onSubmit={submitTask} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="youtube-url">{t.home.youtubeLabel}</Label>
-                <Input
-                  id="youtube-url"
-                  value={youtubeUrl}
-                  onChange={(event) => setYoutubeUrl(event.target.value)}
-                  placeholder="https://www.youtube.com/watch?v=..."
-                  disabled={Boolean(bilibiliUrl.trim()) || hasLocalFile}
-                />
+            <form onSubmit={submitTask} className="space-y-6">
+              {/* Input source */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="youtube-url">{t.home.youtubeLabel}</Label>
+                  <Input
+                    id="youtube-url"
+                    value={youtubeUrl}
+                    onChange={(event) => setYoutubeUrl(event.target.value)}
+                    placeholder="https://www.youtube.com/watch?v=..."
+                    disabled={Boolean(bilibiliUrl.trim()) || hasLocalFile}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="bilibili-url">{t.home.bilibiliLabel}</Label>
+                  <Input
+                    id="bilibili-url"
+                    value={bilibiliUrl}
+                    onChange={(event) => setBilibiliUrl(event.target.value)}
+                    placeholder="https://www.bilibili.com/video/BV..."
+                    disabled={Boolean(youtubeUrl.trim()) || hasLocalFile}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="local-video">{t.home.localVideoLabel}</Label>
+                  <Input
+                    ref={fileInputRef}
+                    id="local-video"
+                    type="file"
+                    accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.flv,.wmv"
+                    onChange={selectLocalFile}
+                    disabled={hasUrl}
+                  />
+                </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="bilibili-url">{t.home.bilibiliLabel}</Label>
-                <Input
-                  id="bilibili-url"
-                  value={bilibiliUrl}
-                  onChange={(event) => setBilibiliUrl(event.target.value)}
-                  placeholder="https://www.bilibili.com/video/BV..."
-                  disabled={Boolean(youtubeUrl.trim()) || hasLocalFile}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="local-video">{t.home.localVideoLabel}</Label>
-                <Input
-                  ref={fileInputRef}
-                  id="local-video"
-                  type="file"
-                  accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.flv,.wmv"
-                  onChange={selectLocalFile}
-                  disabled={hasUrl}
-                />
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
+
+              {/* Translate */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Separator className="flex-1" />
+                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupTranslate}</span>
+                  <Separator className="flex-1" />
+                </div>
                 <div className="space-y-2">
                   <Label htmlFor="direction">{t.home.localDirectionLabel}</Label>
                   <Select
@@ -184,18 +196,52 @@ export default function Home() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-end">
-                  <label className="flex h-10 cursor-pointer items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="size-4 rounded border-gray-300"
-                      checked={addSubtitles}
-                      onChange={(e) => setAddSubtitles(e.target.checked)}
-                    />
-                    {t.home.addSubtitles}
-                  </label>
+              </div>
+
+              {/* ASR */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Separator className="flex-1" />
+                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupAsr}</span>
+                  <Separator className="flex-1" />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="asr-model">{t.home.asrModelLabel}</Label>
+                  <Select
+                    value={asrModel}
+                    onValueChange={(value) => setAsrModel(value ?? "")}
+                  >
+                    <SelectTrigger id="asr-model" className="h-10">
+                      <SelectValue placeholder={t.home.asrWhisperTurbo} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">{t.home.asrWhisperTurbo}</SelectItem>
+                      <SelectItem value="whisper:large-v3">{t.home.asrWhisperLarge}</SelectItem>
+                      <SelectItem value="funasr:iic/SenseVoiceSmall">{t.home.asrSenseVoice}</SelectItem>
+                      <SelectItem value="funasr:FunAudioLLM/Fun-ASR-Nano-2512">{t.home.asrFunAsrNano}</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
+
+              {/* Merge video */}
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <Separator className="flex-1" />
+                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupMergeVideo}</span>
+                  <Separator className="flex-1" />
+                </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-gray-300"
+                    checked={addSubtitles}
+                    onChange={(e) => setAddSubtitles(e.target.checked)}
+                  />
+                  {t.home.addSubtitles}
+                </label>
+              </div>
+
               <div className="flex items-center justify-between gap-3">
                 {queued > 0 ? (
                   <p className="text-xs text-muted-foreground">

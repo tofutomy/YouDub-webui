@@ -246,6 +246,7 @@ def translate_asr(
 ) -> Path:
     output_file = session / "metadata" / f"translation.{source.target_language}.json"
     if output_file.exists():
+        _generate_srt_if_needed(output_file, session, source.target_language)
         return output_file
 
     data = json.loads(asr_file.read_text(encoding="utf-8"))
@@ -276,4 +277,12 @@ def translate_asr(
         json.dumps({"translation": translation}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+    _generate_srt_if_needed(output_file, session, source.target_language)
     return output_file
+
+
+def _generate_srt_if_needed(translation_file: Path, session: Path, target_language: str) -> None:
+    from .ffmpeg import write_srt
+    srt_file = session / "metadata" / f"subtitles.{target_language}.srt"
+    if not srt_file.exists():
+        write_srt(translation_file, session)

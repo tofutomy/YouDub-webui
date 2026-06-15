@@ -247,6 +247,18 @@ def subtitle_filter(video_file: Path, subtitle_file: Path, session: Path) -> str
     return f"subtitles=filename='{sub_path}':force_style='{style}'"
 
 
+def _find_or_generate_srt(session: Path, timings_file: Path) -> Path | None:
+    """Find SRT generated during translate stage, or fallback to generating from timings."""
+    metadata_dir = session / "metadata"
+    # Look for existing SRT files
+    for srt in metadata_dir.glob("subtitles.*.srt"):
+        return srt
+    # Fallback: generate from timings (for backward compatibility with old tasks)
+    if timings_file.exists():
+        return write_srt(timings_file, session)
+    return None
+
+
 def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_file: Path, session: Path, *, add_subtitles: bool = True) -> Path:
     tmp_dir = session / "tmp"
     media_dir = session / "media"
@@ -293,8 +305,10 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     ]
 
     if add_subtitles:
-        subtitles = write_srt(timings_file, session)
-        cmd.extend(["-vf", subtitle_filter(video_input, subtitles, session_dir)])
+        # Read SRT generated during the translate stage (or fallback to generating from timings)
+        subtitles = _find_or_generate_srt(session, timings_file)
+        if subtitles:
+            cmd.extend(["-vf", subtitle_filter(video_input, subtitles, session_dir)])
 
     cmd.extend([
         "-map",

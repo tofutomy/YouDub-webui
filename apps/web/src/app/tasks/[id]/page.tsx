@@ -465,11 +465,11 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Input</p>
-                      <p className="font-mono text-xs">{STAGE_INFO[infoStageTarget].input[language]}</p>
+                      <pre className="mt-1 rounded bg-muted p-2 font-mono text-xs">{STAGE_INFO[infoStageTarget].input[language].split("\n").map((line, i) => <span key={i}>{line}{"\n"}</span>)}</pre>
                     </div>
                     <div>
                       <p className="text-xs font-medium text-muted-foreground">Output</p>
-                      <p className="font-mono text-xs">{STAGE_INFO[infoStageTarget].output[language]}</p>
+                      <pre className="mt-1 rounded bg-muted p-2 font-mono text-xs">{STAGE_INFO[infoStageTarget].output[language].split("\n").map((line, i) => <span key={i}>{line}{"\n"}</span>)}</pre>
                     </div>
                   </div>
                 ) : null}

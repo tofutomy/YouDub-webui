@@ -76,3 +76,22 @@ def detect_source(url: str) -> SourceConfig:
         if source.matches(url):
             return source
     raise ValueError(f"No source matches URL: {url}")
+
+
+def get_source_for_task(task: dict) -> SourceConfig:
+    """Get source config for a task, using task-stored language overrides if available."""
+    source = detect_source(task["url"])
+    asr_language = task.get("asr_language")
+    target_language = task.get("target_language")
+    # If no overrides stored, use the default source config
+    if not asr_language and not target_language:
+        return source
+    # Override with task-stored values, falling back to source defaults
+    return SourceConfig(
+        name=source.name,
+        matches=source.matches,
+        use_proxy=source.use_proxy,
+        cookie_filename=source.cookie_filename,
+        asr_language=asr_language or source.asr_language,
+        target_language=target_language or source.target_language,
+    )

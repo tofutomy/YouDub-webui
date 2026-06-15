@@ -247,7 +247,7 @@ def subtitle_filter(video_file: Path, subtitle_file: Path, session: Path) -> str
     return f"subtitles=filename='{sub_path}':force_style='{style}'"
 
 
-def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_file: Path, session: Path) -> Path:
+def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_file: Path, session: Path, *, add_subtitles: bool = True) -> Path:
     tmp_dir = session / "tmp"
     media_dir = session / "media"
     tmp_dir.mkdir(parents=True, exist_ok=True)
@@ -260,7 +260,6 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     video_input = video_file.resolve()
     dubbing_input = dubbing_file.resolve()
     bgm_input = bgm_file.resolve()
-    subtitles = write_srt(timings_file, session)
     mixed_audio = tmp_dir / "audio_mixed.m4a"
     mixed_audio_output = mixed_audio.resolve()
     final_video_output = final_video.resolve()
@@ -282,34 +281,39 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
         ],
         check=True,
     )
-    subprocess.run(
-        [
-            ffmpeg_binary(),
-            "-y",
-            "-i",
-            str(video_input),
-            "-i",
-            str(mixed_audio_output),
-            "-vf",
-            subtitle_filter(video_input, subtitles, session_dir),
-            "-map",
-            "0:v:0",
-            "-map",
-            "1:a:0",
-            "-c:v",
-            "libx264",
-            "-preset",
-            "fast",
-            "-crf",
-            "23",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            "-shortest",
-            str(final_video_output),
-        ],
-        check=True,
-        cwd=session_dir,
-    )
+
+    # Build the final video command, conditionally including subtitles
+    cmd = [
+        ffmpeg_binary(),
+        "-y",
+        "-i",
+        str(video_input),
+        "-i",
+        str(mixed_audio_output),
+    ]
+
+    if add_subtitles:
+        subtitles = write_srt(timings_file, session)
+        cmd.extend(["-vf", subtitle_filter(video_input, subtitles, session_dir)])
+
+    cmd.extend([
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "fast",
+        "-crf",
+        "23",
+        "-c:a",
+        "aac",
+        "-movflags",
+        "+faststart",
+        "-shortest",
+        str(final_video_output),
+    ])
+
+    subprocess.run(cmd, check=True, cwd=session_dir)
     return final_video

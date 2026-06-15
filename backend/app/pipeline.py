@@ -10,7 +10,7 @@ from . import database
 from .config import WORKFOLDER
 from .devices import device_plan_summary
 from .runtime_checks import validate_runtime_device
-from .sources import detect_source
+from .sources import detect_source, get_source_for_task
 from .stages import STAGES
 from .youtube import is_local_upload_url
 
@@ -192,7 +192,7 @@ class PipelineRunner:
             self.artifacts.asr_fixed_file = _require_existing(session / "metadata" / "asr_fixed.json", "asr_fixed_file")
             return
         if stage == "translate":
-            source = detect_source(task["url"])
+            source = get_source_for_task(task)
             self.artifacts.translation_file = _require_existing(
                 session / "metadata" / f"translation.{source.target_language}.json",
                 "translation_file",
@@ -214,7 +214,7 @@ class PipelineRunner:
         raise RuntimeError(f"Unknown pipeline stage: {stage}")
 
     def _download(self, task: dict) -> None:
-        source = detect_source(task["url"])
+        source = get_source_for_task(task)
         if is_local_upload_url(task["url"]):
             from .adapters.local_video import import_local_video
 
@@ -248,7 +248,7 @@ class PipelineRunner:
 
         session = _require(self.artifacts.session, "session")
         vocals_file = _require(self.artifacts.vocals_file, "vocals_file")
-        source = detect_source(task["url"])
+        source = get_source_for_task(task)
         self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)
         data = _json.loads(self.artifacts.asr_file.read_text(encoding="utf-8"))
         utterances = data["result"]["utterances"]
@@ -265,7 +265,7 @@ class PipelineRunner:
         session = _require(self.artifacts.session, "session")
         asr_file = _require(self.artifacts.asr_file, "asr_file")
         before = len(_json.loads(asr_file.read_text(encoding="utf-8"))["result"]["utterances"])
-        source = detect_source(task["url"])
+        source = get_source_for_task(task)
         self.artifacts.asr_fixed_file = fix_asr_sentences(asr_file, session, language=source.asr_language)
         sentences = _json.loads(self.artifacts.asr_fixed_file.read_text(encoding="utf-8"))["result"]["utterances"]
         self.stage_message(
@@ -280,7 +280,7 @@ class PipelineRunner:
         session = _require(self.artifacts.session, "session")
         asr_file = _require(self.artifacts.asr_fixed_file, "asr_fixed_file")
         settings = database.get_openai_settings()
-        source = detect_source(task["url"])
+        source = get_source_for_task(task)
         self.stage_message(
             "translate",
             f"Using model {settings['model']} at {settings['base_url']} ({source.asr_language}->{source.target_language})",
@@ -327,7 +327,7 @@ class PipelineRunner:
         self.artifacts.timings_file = timings
         self.stage_message("merge_audio", f"Dubbing -> {dubbing.name}, timings -> {timings.name}")
 
-    def _merge_video(self, _: dict) -> None:
+    def _merge_video(self, task: dict) -> None:
         from .adapters.ffmpeg import merge_video
 
         session = _require(self.artifacts.session, "session")
@@ -335,7 +335,8 @@ class PipelineRunner:
         dubbing_file = _require(self.artifacts.dubbing_file, "dubbing_file")
         bgm_file = _require(self.artifacts.bgm_file, "bgm_file")
         timings_file = _require(self.artifacts.timings_file, "timings_file")
-        self.artifacts.final_video = merge_video(video_file, dubbing_file, bgm_file, timings_file, session)
+        add_subtitles = bool(task.get("add_subtitles", 1))
+        self.artifacts.final_video = merge_video(video_file, dubbing_file, bgm_file, timings_file, session, add_subtitles=add_subtitles)
         size_mb = self.artifacts.final_video.stat().st_size / (1024 * 1024)
         self.stage_message("merge_video", f"Final video: {self.artifacts.final_video} ({size_mb:.1f} MB)")
 

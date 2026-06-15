@@ -60,7 +60,8 @@ export default function Home() {
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
-  const [localDirection, setLocalDirection] = useState<LocalDirection>("en-zh")
+  const [direction, setDirection] = useState<LocalDirection>("en-zh")
+  const [addSubtitles, setAddSubtitles] = useState(true)
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -103,8 +104,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-        ? await uploadLocalTask(localFile, localDirection)
-        : await createTask(submittedUrl)
+        ? await uploadLocalTask(localFile, direction, addSubtitles)
+        : await createTask(submittedUrl, direction, addSubtitles)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -156,26 +157,25 @@ export default function Home() {
                   disabled={Boolean(youtubeUrl.trim()) || hasLocalFile}
                 />
               </div>
-              <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+              <div className="space-y-2">
+                <Label htmlFor="local-video">{t.home.localVideoLabel}</Label>
+                <Input
+                  ref={fileInputRef}
+                  id="local-video"
+                  type="file"
+                  accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.flv,.wmv"
+                  onChange={selectLocalFile}
+                  disabled={hasUrl}
+                />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="local-video">{t.home.localVideoLabel}</Label>
-                  <Input
-                    ref={fileInputRef}
-                    id="local-video"
-                    type="file"
-                    accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.flv,.wmv"
-                    onChange={selectLocalFile}
-                    disabled={hasUrl}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="local-direction">{t.home.localDirectionLabel}</Label>
+                  <Label htmlFor="direction">{t.home.localDirectionLabel}</Label>
                   <Select
-                    value={localDirection}
-                    onValueChange={(value) => setLocalDirection(value as LocalDirection)}
-                    disabled={hasUrl}
+                    value={direction}
+                    onValueChange={(value) => setDirection(value as LocalDirection)}
                   >
-                    <SelectTrigger id="local-direction" className="h-10">
+                    <SelectTrigger id="direction" className="h-10">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -183,6 +183,17 @@ export default function Home() {
                       <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
                     </SelectContent>
                   </Select>
+                </div>
+                <div className="flex items-end">
+                  <label className="flex h-10 cursor-pointer items-center gap-2 text-sm">
+                    <input
+                      type="checkbox"
+                      className="size-4 rounded border-gray-300"
+                      checked={addSubtitles}
+                      onChange={(e) => setAddSubtitles(e.target.checked)}
+                    />
+                    {t.home.addSubtitles}
+                  </label>
                 </div>
               </div>
               <div className="flex items-center justify-between gap-3">

@@ -127,16 +127,28 @@ export function resumeTask(taskId: string) {
   return request<Task>(`/api/tasks/${taskId}/resume`, { method: "POST" })
 }
 
-export function createTask(url: string) {
+export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean) {
+  const body: Record<string, unknown> = { url }
+  if (direction) {
+    const parts = direction.split("-")
+    body.asr_language = parts[0]
+    body.target_language = parts[1]
+  }
+  if (addSubtitles !== undefined) {
+    body.add_subtitles = addSubtitles
+  }
   return request<Task>("/api/tasks", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(body),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection) {
+export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean) {
   const form = new FormData()
   form.append("direction", direction)
+  if (addSubtitles !== undefined) {
+    form.append("add_subtitles", String(addSubtitles))
+  }
   form.append("file", file)
 
   const response = await fetch(`${API_BASE}/api/tasks/upload`, {

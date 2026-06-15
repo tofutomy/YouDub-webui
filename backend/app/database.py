@@ -85,6 +85,12 @@ def init_db() -> None:
         task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
         if "title" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT")
+        if "asr_language" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN asr_language TEXT")
+        if "target_language" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN target_language TEXT")
+        if "add_subtitles" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN add_subtitles INTEGER DEFAULT 1")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -135,16 +141,22 @@ def fail_stale_active_tasks() -> None:
                 )
 
 
-def create_task(url: str, task_id: str | None = None) -> str:
+def create_task(
+    url: str,
+    task_id: str | None = None,
+    asr_language: str | None = None,
+    target_language: str | None = None,
+    add_subtitles: bool = True,
+) -> str:
     new_id = task_id or str(uuid.uuid4())
     created_at = now_iso()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at)
-            VALUES (?, ?, 'queued', ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles)),
         )
         conn.executemany(
             """

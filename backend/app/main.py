@@ -34,6 +34,9 @@ def mask_secret(value: str) -> str:
 
 class TaskCreate(BaseModel):
     url: str
+    asr_language: str | None = None
+    target_language: str | None = None
+    add_subtitles: bool = True
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -156,7 +159,13 @@ def create_task(payload: TaskCreate) -> dict:
         return database.get_task(existing_id)
 
     _ensure_runtime_ready()
-    task_id = database.create_task(payload.url.strip(), task_id=video_id)
+    task_id = database.create_task(
+        payload.url.strip(),
+        task_id=video_id,
+        asr_language=payload.asr_language,
+        target_language=payload.target_language,
+        add_subtitles=payload.add_subtitles,
+    )
     worker.enqueue(task_id)
     return database.get_task(task_id)
 
@@ -192,7 +201,11 @@ def _save_uploaded_file(file: UploadFile, destination: Path) -> int:
 
 
 @app.post("/api/tasks/upload", status_code=201)
-def upload_local_video(direction: str = Form("en-zh"), file: UploadFile = File(...)) -> dict:
+def upload_local_video(
+    direction: str = Form("en-zh"),
+    add_subtitles: bool = Form(True),
+    file: UploadFile = File(...),
+) -> dict:
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
         raise HTTPException(status_code=422, detail="Unsupported local video direction.")
 
@@ -208,7 +221,15 @@ def upload_local_video(direction: str = Form("en-zh"), file: UploadFile = File(.
         raise
 
     url = f"local://upload/{task_id}?direction={direction}&filename={quote(original_name)}"
-    database.create_task(url, task_id=task_id)
+    # Parse direction into asr_language and target_language
+    asr_language, target_language = direction.split("-", 1)
+    database.create_task(
+        url,
+        task_id=task_id,
+        asr_language=asr_language,
+        target_language=target_language,
+        add_subtitles=add_subtitles,
+    )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
     return database.get_task(task_id)

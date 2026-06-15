@@ -5,10 +5,12 @@ import { Eye, EyeOff, RefreshCw, Settings } from "lucide-react"
 
 import {
   getCookieInfo,
+  getFunasrSettings,
   getOpenAIModels,
   getOpenAISettings,
   getYtdlpSettings,
   saveCookie,
+  saveFunasrSettings,
   saveOpenAISettings,
   saveYtdlpSettings,
 } from "@/lib/api"
@@ -41,6 +43,7 @@ type SettingsForm = {
   model: string
   translateConcurrency: string
   proxyPort: string
+  useVllm: "auto" | "on" | "off"
 }
 
 const SAVED_API_KEY_MASK = "********"
@@ -54,6 +57,7 @@ const defaultSettings: SettingsForm = {
   apiKey: "",
   model: "gpt-4o-mini",
   translateConcurrency: "50",
+  useVllm: "auto",
   proxyPort: "",
 }
 
@@ -81,8 +85,8 @@ export function SettingsDialog() {
 
   useEffect(() => {
     if (!open) return
-    Promise.all([getCookieInfo(), getOpenAISettings(), getYtdlpSettings()])
-      .then(([cookie, openai, ytdlp]) => {
+    Promise.all([getCookieInfo(), getOpenAISettings(), getYtdlpSettings(), getFunasrSettings()])
+      .then(([cookie, openai, ytdlp, funasr]) => {
         setSettings({
           cookie: cookie.exists ? SAVED_COOKIE_SENTINEL : "",
           baseUrl: openai.base_url,
@@ -90,6 +94,7 @@ export function SettingsDialog() {
           model: openai.model,
           translateConcurrency: openai.translate_concurrency || "50",
           proxyPort: ytdlp.proxy_port,
+          useVllm: (funasr.use_vllm as "auto" | "on" | "off") || "auto",
         })
         setModelOptions(uniqueModels([openai.model]))
         setModelsLoaded(false)
@@ -120,6 +125,7 @@ export function SettingsDialog() {
         translate_concurrency: settings.translateConcurrency,
       })
       const ytdlp = await saveYtdlpSettings({ proxy_port: settings.proxyPort })
+      const funasr = await saveFunasrSettings({ use_vllm: settings.useVllm })
       setMessageKey("saved")
       setSettings((current) => ({
         ...current,
@@ -127,6 +133,7 @@ export function SettingsDialog() {
         cookie: cookieDirty ? (cookie?.exists ? SAVED_COOKIE_SENTINEL : "") : current.cookie,
         translateConcurrency: openai.translate_concurrency || current.translateConcurrency,
         proxyPort: ytdlp.proxy_port,
+        useVllm: (funasr.use_vllm as "auto" | "on" | "off") || "auto",
       }))
       setCookieDirty(false)
       setApiKeyDirty(false)
@@ -227,6 +234,27 @@ export function SettingsDialog() {
                   }
                   placeholder="7890"
                 />
+              </div>
+              <div className="grid gap-2">
+                <Label htmlFor="useVllm">{t.settings.funasrUseVllm}</Label>
+                <Select
+                  value={settings.useVllm}
+                  onValueChange={(value) => {
+                    if (value === "auto" || value === "on" || value === "off") {
+                      setSettings((current) => ({ ...current, useVllm: value }))
+                    }
+                  }}
+                >
+                  <SelectTrigger id="useVllm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">{t.settings.funasrVllmAuto}</SelectItem>
+                    <SelectItem value="on">{t.settings.funasrVllmOn}</SelectItem>
+                    <SelectItem value="off">{t.settings.funasrVllmOff}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t.settings.funasrUseVllmHelp}</p>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="baseUrl">{t.settings.baseUrl}</Label>

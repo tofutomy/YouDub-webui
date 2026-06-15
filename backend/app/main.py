@@ -61,6 +61,10 @@ class YtdlpSettingsUpdate(BaseModel):
     proxy_port: str = ""
 
 
+class FunasrSettingsUpdate(BaseModel):
+    use_vllm: str = "auto"
+
+
 def normalize_proxy_port(value: str) -> str:
     proxy_port = value.strip()
     if not proxy_port:
@@ -85,6 +89,15 @@ def normalize_translate_concurrency(value: str) -> str:
             status_code=422, detail="Translate concurrency must be between 1 and 200."
         )
     return concurrency
+
+
+def normalize_funasr_use_vllm(value: str) -> str:
+    choice = (value or "auto").strip().lower()
+    if choice not in {"auto", "on", "off"}:
+        raise HTTPException(
+            status_code=422, detail="FunASR use_vllm must be one of: auto, on, off."
+        )
+    return choice
 
 
 @asynccontextmanager
@@ -528,3 +541,14 @@ def get_ytdlp_settings() -> dict:
 def save_ytdlp_settings(payload: YtdlpSettingsUpdate) -> dict:
     database.save_ytdlp_settings(normalize_proxy_port(payload.proxy_port))
     return get_ytdlp_settings()
+
+
+@app.get("/api/settings/funasr")
+def get_funasr_settings() -> dict:
+    return database.get_funasr_settings()
+
+
+@app.post("/api/settings/funasr")
+def save_funasr_settings(payload: FunasrSettingsUpdate) -> dict:
+    database.save_funasr_settings(normalize_funasr_use_vllm(payload.use_vllm))
+    return get_funasr_settings()

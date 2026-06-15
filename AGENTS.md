@@ -103,3 +103,4 @@ download → separate → asr → asr_fix → translate → split_audio → tts 
 8. **代理**：YouTube 需要代理，Bilibili 自动抓取匿名 cookie
 9. **Next.js 上传限制**：默认代理请求体 10MB，需在 `next.config.ts` 设置 `experimental.proxyClientMaxBodySize`
 10. **数据库设置同步**：`.env` 改动需重启后端才生效（`init_db()` 用 `ON CONFLICT DO UPDATE`）
+11. **Fun-ASR-Nano + VAD**：必须安装 `vllm` 并设置 `FUNASR_USE_VLLM=auto`（或在 settings 弹窗选 `Auto`/`On`）。标准 `funasr.AutoModel` 路径在 [`funasr/models/fun_asr_nano/model.py:559`](.venv/Lib/site-packages/funasr/models/fun_asr_nano/model.py) 会因 `NotImplementedError: batch decoding is not implemented` 崩溃，vLLM 引擎通过 PagedAttention + Continuous Batching 内部消化 batch，是官方唯一支持的路径（参考 [vllm_guide.md](https://github.com/modelscope/FunASR/blob/main/docs/vllm_guide.md)）。

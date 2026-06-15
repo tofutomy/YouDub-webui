@@ -65,6 +65,10 @@ export type YtdlpSettings = {
   proxy_port: string
 }
 
+export type FunasrSettings = {
+  use_vllm: "auto" | "on" | "off"
+}
+
 export type LocalDirection = "en-zh" | "zh-en"
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -241,6 +245,17 @@ export function getYtdlpSettings() {
 
 export function saveYtdlpSettings(settings: YtdlpSettings) {
   return request<YtdlpSettings>("/api/settings/ytdlp", {
+    method: "POST",
+    body: JSON.stringify(settings),
+  })
+}
+
+export function getFunasrSettings() {
+  return request<FunasrSettings>("/api/settings/funasr")
+}
+
+export function saveFunasrSettings(settings: FunasrSettings) {
+  return request<FunasrSettings>("/api/settings/funasr", {
     method: "POST",
     body: JSON.stringify(settings),
   })

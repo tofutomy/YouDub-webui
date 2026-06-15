@@ -148,6 +148,12 @@ const messages: Record<UiLanguage, Messages> = {
       saveError: "Failed to save settings",
       noModels: "No models returned.",
       loadModelsError: "Failed to load models",
+      funasrUseVllm: "FunASR vLLM engine",
+      funasrUseVllmHelp:
+        "Use the vLLM inference engine for LLM-based ASR models (e.g. Fun-ASR-Nano). Auto: enabled when the model needs it and vllm is installed. On: force on (requires vllm). Off: force off (Nano will raise NotImplementedError).",
+      funasrVllmAuto: "Auto (recommended)",
+      funasrVllmOn: "Always on",
+      funasrVllmOff: "Always off",
     },
     status: {
       queued: "queued",
@@ -285,6 +291,12 @@ const messages: Record<UiLanguage, Messages> = {
       saveError: "保存设置失败",
       noModels: "没有返回可用模型。",
       loadModelsError: "加载模型失败",
+      funasrUseVllm: "FunASR vLLM 引擎",
+      funasrUseVllmHelp:
+        "对 LLM-based 模型（如 Fun-ASR-Nano）使用 vLLM 推理引擎。auto：检测到 LLM 模型且 vllm 已装时自动启用；on：强制启用（需要 vllm）；off：强制禁用（Nano 会报 NotImplementedError）。",
+      funasrVllmAuto: "自动（推荐）",
+      funasrVllmOn: "始终启用",
+      funasrVllmOff: "始终禁用",
     },
     status: {
       queued: "排队中",

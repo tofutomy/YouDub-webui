@@ -6,7 +6,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from .config import DB_PATH, ensure_runtime_dirs, openai_defaults, ytdlp_defaults
+from .config import (
+    DB_PATH,
+    ensure_runtime_dirs,
+    funasr_defaults,
+    openai_defaults,
+    ytdlp_defaults,
+)
 from .stages import STAGES
 
 
@@ -407,6 +413,23 @@ def get_ytdlp_settings() -> dict[str, str]:
 
 def save_ytdlp_settings(proxy_port: str) -> None:
     set_setting("ytdlp.proxy_port", proxy_port.strip())
+
+
+VALID_FUNASR_USE_VLLM = {"auto", "on", "off"}
+
+
+def get_funasr_settings() -> dict[str, str]:
+    defaults = funasr_defaults()
+    return {
+        "use_vllm": get_setting("funasr.use_vllm", defaults["use_vllm"]) or "auto",
+    }
+
+
+def save_funasr_settings(use_vllm: str) -> None:
+    value = (use_vllm or "auto").strip().lower()
+    if value not in VALID_FUNASR_USE_VLLM:
+        raise ValueError(f"use_vllm must be one of {sorted(VALID_FUNASR_USE_VLLM)}")
+    set_setting("funasr.use_vllm", value)
 
 
 def log_path(task_id: str) -> Path:

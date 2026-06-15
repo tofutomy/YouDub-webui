@@ -53,3 +53,9 @@ def ytdlp_defaults() -> dict[str, str]:
     return {
         "proxy_port": os.getenv("YTDLP_PROXY_PORT", ""),
     }
+
+
+def funasr_defaults() -> dict[str, str]:
+    return {
+        "use_vllm": os.getenv("FUNASR_USE_VLLM", "auto").strip().lower(),
+    }

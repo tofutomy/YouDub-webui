@@ -16,7 +16,7 @@ from . import database, worker
 from .adapters.local_video import remove_upload, upload_dir
 from .adapters.openai_translate import list_models as list_openai_models
 from .config import WORKFOLDER, YOUTUBE_COOKIE_PATH, ensure_runtime_dirs
-from .pipeline import run_task
+from .pipeline import run_task, run_task_single_stage
 from .runtime_checks import validate_runtime_device
 from .sanitize import sanitize_text
 from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url
@@ -330,6 +330,23 @@ def rerun_stage(task_id: str, stage_name: str) -> dict:
     _ensure_runtime_ready()
     database.reset_stage_for_rerun(task_id, stage_name)
     worker.enqueue(task_id)
+    return database.get_task(task_id)
+
+
+@app.post("/api/tasks/{task_id}/rerun-single-stage/{stage_name}")
+def rerun_single_stage(task_id: str, stage_name: str) -> dict:
+    from .stages import STAGE_NAMES
+
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    if task["status"] == "running":
+        raise HTTPException(status_code=409, detail="Cannot rerun stage of a running task.")
+    if stage_name not in STAGE_NAMES:
+        raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
+    _ensure_runtime_ready()
+    database.reset_single_stage_for_rerun(task_id, stage_name)
+    run_task_single_stage(task_id, stage_name)
     return database.get_task(task_id)
 
 

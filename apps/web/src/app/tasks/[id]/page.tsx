@@ -7,6 +7,7 @@ import {
   Circle,
   Download,
   FileText,
+  Info,
   Loader2,
   Play,
   RotateCw,
@@ -22,11 +23,12 @@ import {
   finalVideoUrl,
   getTask,
   getTaskLog,
+  rerunSingleStage,
   rerunStage,
   rerunTask,
   resumeTask,
 } from "@/lib/api"
-import { useI18n } from "@/lib/i18n"
+import { useI18n, STAGE_INFO } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
 import { Badge } from "@/components/ui/badge"
@@ -84,7 +86,7 @@ function normalizeProgress(value: number | null | undefined) {
 export default function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
-  const { stageLabel, statusLabel, t } = useI18n()
+  const { language, stageLabel, statusLabel, t } = useI18n()
   const [task, setTask] = useState<Task | null>(null)
   const [log, setLog] = useState("")
   const [error, setError] = useState("")
@@ -100,6 +102,11 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [rerunStageTarget, setRerunStageTarget] = useState<string | null>(null)
   const [rerunStaging, setRerunStaging] = useState(false)
   const [rerunStageError, setRerunStageError] = useState("")
+  const [rerunSingleOpen, setRerunSingleOpen] = useState(false)
+  const [rerunSingleTarget, setRerunSingleTarget] = useState<string | null>(null)
+  const [rerunSingleIng, setRerunSingleIng] = useState(false)
+  const [rerunSingleError, setRerunSingleError] = useState("")
+  const [infoStageTarget, setInfoStageTarget] = useState<string | null>(null)
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -155,6 +162,23 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setRerunStageError(err instanceof Error ? err.message : "Failed to rerun stage")
     } finally {
       setRerunStaging(false)
+    }
+  }
+
+  const handleRerunSingleStage = async () => {
+    if (!rerunSingleTarget) return
+    setRerunSingleIng(true)
+    setRerunSingleError("")
+    try {
+      const next = await rerunSingleStage(id, rerunSingleTarget)
+      setRerunSingleOpen(false)
+      setRerunSingleTarget(null)
+      setTask(next)
+      setLog("")
+    } catch (err) {
+      setRerunSingleError(err instanceof Error ? err.message : "Failed to rerun stage")
+    } finally {
+      setRerunSingleIng(false)
     }
   }
 
@@ -283,6 +307,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 {task.stages.map((stage, index) => {
                   const stageProgress = normalizeProgress(stage.progress)
                   const canRerunStage = task.status !== "running"
+                  const stageInfo = STAGE_INFO[stage.name]
                   return (
                     <li
                       key={stage.name}
@@ -293,6 +318,15 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="text-xs text-muted-foreground">#{index + 1}</span>
                           <p className="font-medium">{stageLabel(stage.name, stage.label)}</p>
+                          {stageInfo ? (
+                            <button
+                              type="button"
+                              className="text-muted-foreground hover:text-foreground"
+                              onClick={() => setInfoStageTarget(stage.name)}
+                            >
+                              <Info className="size-3.5" />
+                            </button>
+                          ) : null}
                           <Badge className={statusBadgeClass(stage.status)}>{statusLabel(stage.status)}</Badge>
                           {stage.started_at ? (
                             <span className="text-xs text-muted-foreground">
@@ -313,18 +347,32 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                         ) : null}
                       </div>
                       {canRerunStage ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
-                          onClick={() => {
-                            setRerunStageTarget(stage.name)
-                            setRerunStageOpen(true)
-                          }}
-                        >
-                          <RotateCw className="size-3" />
-                          {t.task.rerunStage}
-                        </Button>
+                        <div className="flex shrink-0 flex-row gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setRerunSingleTarget(stage.name)
+                              setRerunSingleOpen(true)
+                            }}
+                          >
+                            <RotateCw className="size-3" />
+                            {t.task.rerunSingleStage}
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 text-xs text-muted-foreground hover:text-foreground"
+                            onClick={() => {
+                              setRerunStageTarget(stage.name)
+                              setRerunStageOpen(true)
+                            }}
+                          >
+                            <RotateCw className="size-3" />
+                            {t.task.rerunStage}
+                          </Button>
+                        </div>
                       ) : null}
                     </li>
                   )
@@ -375,6 +423,60 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                     {rerunStaging ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
                     {rerunStaging ? t.task.rerunningStage : t.task.confirmRerun}
                   </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={rerunSingleOpen} onOpenChange={setRerunSingleOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.task.rerunSingleStageTitle}</DialogTitle>
+                  <DialogDescription>
+                    {t.task.rerunSingleStageDescription}
+                  </DialogDescription>
+                </DialogHeader>
+                {rerunSingleError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {rerunSingleError}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={rerunSingleIng} />}>
+                    {t.common.cancel}
+                  </DialogClose>
+                  <Button onClick={handleRerunSingleStage} disabled={rerunSingleIng}>
+                    {rerunSingleIng ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+                    {rerunSingleIng ? t.task.rerunningSingleStage : t.task.confirmRerun}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+
+            <Dialog open={!!infoStageTarget} onOpenChange={(open) => { if (!open) setInfoStageTarget(null) }}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.task.stageInfoTitle}</DialogTitle>
+                </DialogHeader>
+                {infoStageTarget && STAGE_INFO[infoStageTarget] ? (
+                  <div className="space-y-3 text-sm">
+                    <div>
+                      <p className="font-medium">{stageLabel(infoStageTarget)}</p>
+                      <p className="mt-1 text-muted-foreground">{STAGE_INFO[infoStageTarget].description[language]}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Input</p>
+                      <p className="font-mono text-xs">{STAGE_INFO[infoStageTarget].input[language]}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-medium text-muted-foreground">Output</p>
+                      <p className="font-mono text-xs">{STAGE_INFO[infoStageTarget].output[language]}</p>
+                    </div>
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" />}>
+                    {t.common.close}
+                  </DialogClose>
                 </DialogFooter>
               </DialogContent>
             </Dialog>

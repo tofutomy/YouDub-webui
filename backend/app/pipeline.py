@@ -111,6 +111,52 @@ class PipelineRunner:
             self.log("Task failed")
             self.log(traceback.format_exc())
 
+    def run_single_stage(self, stage_name: str) -> None:
+        """Run only the specified stage, restoring artifacts from previous stages."""
+        task = database.get_task(self.task_id)
+        if not task:
+            return
+
+        database.update_task(self.task_id, status="running", started_at=database.now_iso())
+        self.log(f"Single stage rerun: {stage_name}")
+
+        try:
+            validate_runtime_device()
+            # Restore artifacts from all previous stages
+            for s in STAGES:
+                if s.name == stage_name:
+                    break
+                if self._stage_status(s.name) == "succeeded":
+                    self._restore_cached_stage(s.name, database.get_task(self.task_id))
+
+            # Run the target stage
+            self._run_stage(stage_name)
+
+            database.update_task(
+                self.task_id,
+                status="succeeded",
+                current_stage="done",
+                completed_at=database.now_iso(),
+            )
+            self.log(f"Single stage rerun completed: {stage_name}")
+        except Exception as exc:
+            database.update_stage(
+                self.task_id,
+                stage_name,
+                status="failed",
+                completed_at=database.now_iso(),
+                error_message=str(exc),
+                last_message="Failed",
+            )
+            database.update_task(
+                self.task_id,
+                status="failed",
+                error_message=str(exc),
+                completed_at=database.now_iso(),
+            )
+            self.log(f"Single stage rerun failed: {stage_name}")
+            self.log(traceback.format_exc())
+
     def log(self, message: str) -> None:
         _write_log(self.task_id, message)
 
@@ -343,3 +389,7 @@ class PipelineRunner:
 
 def run_task(task_id: str) -> None:
     PipelineRunner(task_id).run()
+
+
+def run_task_single_stage(task_id: str, stage_name: str) -> None:
+    PipelineRunner(task_id).run_single_stage(stage_name)

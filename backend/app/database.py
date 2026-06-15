@@ -298,6 +298,32 @@ def reset_stage_for_rerun(task_id: str, stage_name: str) -> None:
         )
 
 
+def reset_single_stage_for_rerun(task_id: str, stage_name: str) -> None:
+    """Reset only the given stage to pending, without affecting other stages or task status."""
+    from .stages import STAGE_NAMES
+
+    if stage_name not in STAGE_NAMES:
+        raise ValueError(f"Unknown stage: {stage_name}")
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE task_stages
+            SET status = 'pending', started_at = NULL, completed_at = NULL,
+                progress = NULL, last_message = NULL, error_message = NULL
+            WHERE task_id = ? AND name = ?
+            """,
+            (task_id, stage_name),
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'queued', current_stage = ?
+            WHERE id = ?
+            """,
+            (stage_name, task_id),
+        )
+
+
 def update_task(task_id: str, **fields: Any) -> None:
     if not fields:
         return

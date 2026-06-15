@@ -74,6 +74,11 @@ const messages: Record<UiLanguage, Messages> = {
       rerunStageDescription:
         "This stage and all subsequent stages will be reset and re-run. Already-succeeded stages before this one will be reused from cache.",
       rerunningStage: "Rerunning",
+      rerunSingleStage: "Rerun this stage",
+      rerunSingleStageTitle: "Rerun this stage only?",
+      rerunSingleStageDescription:
+        "Only this stage will be reset and re-run. All other stages and their outputs will remain unchanged.",
+      rerunningSingleStage: "Rerunning",
       runLog: "Run log",
       emptyLog: "Logs will appear once the task starts.",
       dangerZone: "Danger zone",
@@ -97,6 +102,7 @@ const messages: Record<UiLanguage, Messages> = {
       deleteError: "Failed to delete task",
       rerunError: "Failed to rerun task",
       resumeError: "Failed to resume task",
+      stageInfoTitle: "Stage info",
     },
     settings: {
       button: "Settings",
@@ -190,6 +196,10 @@ const messages: Record<UiLanguage, Messages> = {
       rerunStageTitle: "确认从此阶段重跑？",
       rerunStageDescription: "该阶段及后续所有阶段将被重置并重新执行。该阶段之前已成功的阶段会复用缓存结果。",
       rerunningStage: "重跑中",
+      rerunSingleStage: "重跑此阶段",
+      rerunSingleStageTitle: "确认重跑此阶段？",
+      rerunSingleStageDescription: "仅重置并重新执行该阶段。其他所有阶段及其产出保持不变。",
+      rerunningSingleStage: "重跑中",
       runLog: "运行日志",
       emptyLog: "任务开始后会显示日志。",
       dangerZone: "危险操作",
@@ -211,6 +221,7 @@ const messages: Record<UiLanguage, Messages> = {
       deleteError: "删除任务失败",
       rerunError: "重跑任务失败",
       resumeError: "继续任务失败",
+      stageInfoTitle: "阶段说明",
     },
     settings: {
       button: "设置",
@@ -258,6 +269,60 @@ const messages: Record<UiLanguage, Messages> = {
       merge_video: "合成视频",
       done: "已完成",
     },
+  },
+}
+
+export type StageInfo = {
+  description: Record<UiLanguage, string>
+  input: Record<UiLanguage, string>
+  output: Record<UiLanguage, string>
+}
+
+export const STAGE_INFO: Record<string, StageInfo> = {
+  download: {
+    description: { en: "Download the video from YouTube/Bilibili, or import a local file.", zh: "从 YouTube/Bilibili 下载视频，或导入本地文件。" },
+    input: { en: "Video URL or local file", zh: "视频链接或本地文件" },
+    output: { en: "video_source.mp4 + metadata", zh: "video_source.mp4 + 元数据" },
+  },
+  separate: {
+    description: { en: "Use Demucs to separate the audio into vocals and background music (BGM).", zh: "使用 Demucs 将音频分离为人声和背景音乐（BGM）。" },
+    input: { en: "video_source.mp4", zh: "video_source.mp4" },
+    output: { en: "audio_vocals.wav + audio_bgm.wav", zh: "audio_vocals.wav + audio_bgm.wav" },
+  },
+  asr: {
+    description: { en: "Use Whisper to recognize speech in the vocals and generate timestamps.", zh: "使用 Whisper 识别语音并生成时间戳。" },
+    input: { en: "audio_vocals.wav", zh: "audio_vocals.wav" },
+    output: { en: "asr.json (segments + timestamps)", zh: "asr.json（分段 + 时间戳）" },
+  },
+  asr_fix: {
+    description: { en: "Re-segment the ASR output into clean, well-timed sentences.", zh: "将 ASR 输出重新切分为干净、时间合理的句子。" },
+    input: { en: "asr.json", zh: "asr.json" },
+    output: { en: "asr_fixed.json", zh: "asr_fixed.json" },
+  },
+  translate: {
+    description: { en: "Translate the recognized text to the target language using OpenAI.", zh: "使用 OpenAI 将识别的文本翻译为目标语言。" },
+    input: { en: "asr_fixed.json", zh: "asr_fixed.json" },
+    output: { en: "translation.{lang}.json", zh: "translation.{lang}.json" },
+  },
+  split_audio: {
+    description: { en: "Split the vocals into per-segment reference clips for TTS.", zh: "将人声按句子切分为 TTS 参考音频片段。" },
+    input: { en: "audio_vocals.wav + translation file", zh: "audio_vocals.wav + 翻译文件" },
+    output: { en: "segments/vocals/*.wav", zh: "segments/vocals/*.wav" },
+  },
+  tts: {
+    description: { en: "Use VoxCPM2 to generate dubbed audio for each translated sentence.", zh: "使用 VoxCPM2 为每句翻译生成配音音频。" },
+    input: { en: "translation file + vocal reference clips", zh: "翻译文件 + 人声参考片段" },
+    output: { en: "segments/tts/*.wav", zh: "segments/tts/*.wav" },
+  },
+  merge_audio: {
+    description: { en: "Concatenate TTS clips, adjust speed to match original timing, and produce the final dubbing track.", zh: "拼接 TTS 片段，调整语速对齐原始时间轴，生成最终配音音轨。" },
+    input: { en: "TTS clips + translation file", zh: "TTS 片段 + 翻译文件" },
+    output: { en: "audio_dubbing.wav + timings.json", zh: "audio_dubbing.wav + timings.json" },
+  },
+  merge_video: {
+    description: { en: "Mix dubbing with BGM, optionally burn subtitles, and merge with the original video.", zh: "将配音与 BGM 混合，可选烧录字幕，与原始视频合并。" },
+    input: { en: "video + dubbing + BGM + timings", zh: "视频 + 配音 + BGM + 时间戳" },
+    output: { en: "video_final.mp4", zh: "video_final.mp4" },
   },
 }
 

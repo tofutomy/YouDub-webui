@@ -127,6 +127,10 @@ export function resumeTask(taskId: string) {
   return request<Task>(`/api/tasks/${taskId}/resume`, { method: "POST" })
 }
 
+export function rerunStage(taskId: string, stageName: string) {
+  return request<Task>(`/api/tasks/${taskId}/rerun-stage/${stageName}`, { method: "POST" })
+}
+
 export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean) {
   const body: Record<string, unknown> = { url }
   if (direction) {

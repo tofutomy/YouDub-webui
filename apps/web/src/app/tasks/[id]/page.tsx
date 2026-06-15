@@ -22,6 +22,7 @@ import {
   finalVideoUrl,
   getTask,
   getTaskLog,
+  rerunStage,
   rerunTask,
   resumeTask,
 } from "@/lib/api"
@@ -95,6 +96,10 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [rerunError, setRerunError] = useState("")
   const [resuming, setResuming] = useState(false)
   const [resumeError, setResumeError] = useState("")
+  const [rerunStageOpen, setRerunStageOpen] = useState(false)
+  const [rerunStageTarget, setRerunStageTarget] = useState<string | null>(null)
+  const [rerunStaging, setRerunStaging] = useState(false)
+  const [rerunStageError, setRerunStageError] = useState("")
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -133,6 +138,23 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setResumeError(err instanceof Error ? err.message : t.task.resumeError)
     } finally {
       setResuming(false)
+    }
+  }
+
+  const handleRerunStage = async () => {
+    if (!rerunStageTarget) return
+    setRerunStaging(true)
+    setRerunStageError("")
+    try {
+      const next = await rerunStage(id, rerunStageTarget)
+      setRerunStageOpen(false)
+      setRerunStageTarget(null)
+      setTask(next)
+      setLog("")
+    } catch (err) {
+      setRerunStageError(err instanceof Error ? err.message : "Failed to rerun stage")
+    } finally {
+      setRerunStaging(false)
     }
   }
 
@@ -260,6 +282,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <ol className="grid gap-3">
                 {task.stages.map((stage, index) => {
                   const stageProgress = normalizeProgress(stage.progress)
+                  const canRerunStage = task.status !== "running"
                   return (
                     <li
                       key={stage.name}
@@ -289,6 +312,20 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                           </div>
                         ) : null}
                       </div>
+                      {canRerunStage ? (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="shrink-0 text-xs text-muted-foreground hover:text-foreground"
+                          onClick={() => {
+                            setRerunStageTarget(stage.name)
+                            setRerunStageOpen(true)
+                          }}
+                        >
+                          <RotateCw className="size-3" />
+                          {t.task.rerunStage}
+                        </Button>
+                      ) : null}
                     </li>
                   )
                 })}
@@ -316,6 +353,31 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 {resumeError}
               </div>
             ) : null}
+
+            <Dialog open={rerunStageOpen} onOpenChange={setRerunStageOpen}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>{t.task.rerunStageTitle}</DialogTitle>
+                  <DialogDescription>
+                    {t.task.rerunStageDescription}
+                  </DialogDescription>
+                </DialogHeader>
+                {rerunStageError ? (
+                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                    {rerunStageError}
+                  </div>
+                ) : null}
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={rerunStaging} />}>
+                    {t.common.cancel}
+                  </DialogClose>
+                  <Button onClick={handleRerunStage} disabled={rerunStaging}>
+                    {rerunStaging ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
+                    {rerunStaging ? t.task.rerunningStage : t.task.confirmRerun}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </CardContent>
         </Card>
 

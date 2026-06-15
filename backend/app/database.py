@@ -268,6 +268,36 @@ def reset_failed_for_resume(task_id: str) -> None:
         )
 
 
+def reset_stage_for_rerun(task_id: str, stage_name: str) -> None:
+    """Reset the given stage and all subsequent stages to pending."""
+    from .stages import STAGE_NAMES
+
+    if stage_name not in STAGE_NAMES:
+        raise ValueError(f"Unknown stage: {stage_name}")
+    start_index = STAGE_NAMES.index(stage_name)
+    stages_to_reset = STAGE_NAMES[start_index:]
+    with connect() as conn:
+        placeholders = ",".join("?" for _ in stages_to_reset)
+        conn.execute(
+            f"""
+            UPDATE task_stages
+            SET status = 'pending', started_at = NULL, completed_at = NULL,
+                progress = NULL, last_message = NULL, error_message = NULL
+            WHERE task_id = ? AND name IN ({placeholders})
+            """,
+            [task_id, *stages_to_reset],
+        )
+        conn.execute(
+            """
+            UPDATE tasks
+            SET status = 'queued', error_message = NULL, completed_at = NULL,
+                started_at = NULL, current_stage = ?
+            WHERE id = ?
+            """,
+            (stage_name, task_id),
+        )
+
+
 def update_task(task_id: str, **fields: Any) -> None:
     if not fields:
         return

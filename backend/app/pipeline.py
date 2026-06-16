@@ -6,13 +6,18 @@ from pathlib import Path
 from time import monotonic
 from typing import Callable
 
-from . import database
+from . import database, worker
 from .config import WORKFOLDER
 from .devices import device_plan_summary
 from .runtime_checks import validate_runtime_device
 from .sources import detect_source, get_source_for_task
 from .stages import STAGES
+from .stops import STOPPED_MESSAGE, mark_task_as_stopped
 from .youtube import is_local_upload_url
+
+
+class PipelineStopped(Exception):
+    """Raised by the pipeline when a user-requested stop is observed."""
 
 
 @dataclass
@@ -90,6 +95,9 @@ class PipelineRunner:
                 completed_at=database.now_iso(),
             )
             self.log("Task succeeded")
+        except PipelineStopped as exc:
+            mark_task_as_stopped(self.task_id, error_message=str(exc))
+            self.log(f"Task stopped: {exc}")
         except Exception as exc:
             current = database.get_task(self.task_id)
             failed_stage = current["current_stage"] if current else None
@@ -139,6 +147,9 @@ class PipelineRunner:
                 completed_at=database.now_iso(),
             )
             self.log(f"Single stage rerun completed: {stage_name}")
+        except PipelineStopped as exc:
+            mark_task_as_stopped(self.task_id, error_message=str(exc))
+            self.log(f"Single stage rerun stopped: {stage_name}")
         except Exception as exc:
             database.update_stage(
                 self.task_id,
@@ -174,6 +185,11 @@ class PipelineRunner:
                 return
             if now - last_at < 2:
                 return
+        # Cooperative cancellation: also re-checked at stage boundaries, but checking
+        # here means a stop request interrupts long-running stages (e.g. TTS) within
+        # a couple of progress ticks (~2s).
+        if worker.is_stop_requested(self.task_id):
+            raise PipelineStopped(STOPPED_MESSAGE)
         database.update_stage(self.task_id, stage, progress=bounded, last_message=message)
         self._progress_state[stage] = (bounded, now)
 
@@ -191,6 +207,9 @@ class PipelineRunner:
             self._restore_cached_stage(stage, database.get_task(self.task_id))
             self.log(f"[{stage}] Reused cached output")
             return
+        # Cooperative cancellation point: stop before starting a new stage.
+        if worker.is_stop_requested(self.task_id):
+            raise PipelineStopped(STOPPED_MESSAGE)
         self._progress_state.pop(stage, None)
         database.update_task(self.task_id, current_stage=stage)
         database.update_stage(

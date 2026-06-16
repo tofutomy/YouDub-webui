@@ -19,6 +19,7 @@ from .config import WORKFOLDER, YOUTUBE_COOKIE_PATH, ensure_runtime_dirs
 from .pipeline import run_task, run_task_single_stage
 from .runtime_checks import validate_runtime_device
 from .sanitize import sanitize_text
+from .stops import STOPPED_BEFORE_START_MESSAGE, mark_task_as_stopped
 from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".flv", ".wmv"}
@@ -379,6 +380,25 @@ def resume_task(task_id: str) -> dict:
     return database.get_task(task_id)
 
 
+@app.post("/api/tasks/{task_id}/stop")
+def stop_task(task_id: str) -> dict:
+    task = database.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    status = task["status"]
+    if status not in ("running", "queued"):
+        raise HTTPException(
+            status_code=409,
+            detail="Only running or queued tasks can be stopped.",
+        )
+    worker.request_stop(task_id)
+    # For queued tasks the worker will short-circuit, but we mark them as failed
+    # immediately so the UI reflects the change without waiting for dequeue.
+    if status == "queued":
+        mark_task_as_stopped(task_id, error_message=STOPPED_BEFORE_START_MESSAGE)
+    return database.get_task(task_id)
+
+
 @app.post("/api/tasks/{task_id}/rerun-stage/{stage_name}")
 def rerun_stage(task_id: str, stage_name: str) -> dict:
     from .stages import STAGE_NAMES
@@ -425,7 +445,16 @@ def clear_stage_output(task_id: str, stage_name: str) -> dict:
     if stage_name not in STAGE_NAMES:
         raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
     _clear_stage_output(task, stage_name)
-    database.reset_single_stage_for_rerun(task_id, stage_name)
+    database.update_stage(
+        task_id,
+        stage_name,
+        status="pending",
+        started_at=None,
+        completed_at=None,
+        progress=None,
+        last_message=None,
+        error_message=None,
+    )
     return database.get_task(task_id)
 
 

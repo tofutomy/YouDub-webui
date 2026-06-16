@@ -99,6 +99,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN add_subtitles INTEGER DEFAULT 1")
         if "asr_model" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN asr_model TEXT")
+        if "stop_requested" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN stop_requested INTEGER DEFAULT 0")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -270,7 +272,7 @@ def reset_failed_for_resume(task_id: str) -> None:
             """
             UPDATE tasks
             SET status = 'queued', error_message = NULL, completed_at = NULL,
-                started_at = NULL
+                started_at = NULL, stop_requested = 0
             WHERE id = ?
             """,
             (task_id,),
@@ -300,7 +302,7 @@ def reset_stage_for_rerun(task_id: str, stage_name: str) -> None:
             """
             UPDATE tasks
             SET status = 'queued', error_message = NULL, completed_at = NULL,
-                started_at = NULL, current_stage = ?
+                started_at = NULL, stop_requested = 0, current_stage = ?
             WHERE id = ?
             """,
             (stage_name, task_id),
@@ -326,7 +328,7 @@ def reset_single_stage_for_rerun(task_id: str, stage_name: str) -> None:
         conn.execute(
             """
             UPDATE tasks
-            SET status = 'queued', current_stage = ?
+            SET status = 'queued', current_stage = ?, stop_requested = 0
             WHERE id = ?
             """,
             (stage_name, task_id),

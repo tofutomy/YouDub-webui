@@ -13,6 +13,7 @@ import {
   Play,
   RotateCw,
   Settings,
+  StopCircle,
   Trash2,
   XCircle,
 } from "lucide-react"
@@ -30,6 +31,7 @@ import {
   rerunStage,
   rerunTask,
   resumeTask,
+  stopTask,
   updateTaskConfig,
 } from "@/lib/api"
 import { useI18n, STAGE_INFO } from "@/lib/i18n"
@@ -110,6 +112,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [rerunError, setRerunError] = useState("")
   const [resuming, setResuming] = useState(false)
   const [resumeError, setResumeError] = useState("")
+  const [stopOpen, setStopOpen] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [stopError, setStopError] = useState("")
   const [rerunStageOpen, setRerunStageOpen] = useState(false)
   const [rerunStageTarget, setRerunStageTarget] = useState<string | null>(null)
   const [rerunStaging, setRerunStaging] = useState(false)
@@ -169,6 +174,20 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setResumeError(err instanceof Error ? err.message : t.task.resumeError)
     } finally {
       setResuming(false)
+    }
+  }
+
+  const handleStop = async () => {
+    setStopping(true)
+    setStopError("")
+    try {
+      const next = await stopTask(id)
+      setTask(next)
+      setStopOpen(false)
+    } catch (err) {
+      setStopError(err instanceof Error ? err.message : t.task.stopError)
+    } finally {
+      setStopping(false)
     }
   }
 
@@ -269,7 +288,10 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   const isRunning = task?.status === "running"
+  const isQueued = task?.status === "queued"
+  const isActive = isRunning || isQueued
   const isFailed = task?.status === "failed"
+  const isStopped = task?.stop_requested === 1
 
   useEffect(() => {
     let cancelled = false
@@ -321,7 +343,43 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
           <CardHeader className="gap-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <CardTitle>{t.task.overview}</CardTitle>
-              <Badge className={statusBadgeClass(task?.status)}>{statusLabel(task?.status)}</Badge>
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge className={statusBadgeClass(task?.status)}>{statusLabel(task?.status)}</Badge>
+                {isActive ? (
+                  <Dialog open={stopOpen} onOpenChange={setStopOpen}>
+                    <DialogTrigger
+                      render={
+                        <Button variant="destructive" size="sm">
+                          <StopCircle className="size-4" />
+                          {t.task.stopTask}
+                        </Button>
+                      }
+                    />
+                    <DialogContent>
+                      <DialogHeader>
+                        <DialogTitle>{t.task.stopTitle}</DialogTitle>
+                        <DialogDescription>
+                          {t.task.stopDescription}
+                        </DialogDescription>
+                      </DialogHeader>
+                      {stopError ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                          {stopError}
+                        </div>
+                      ) : null}
+                      <DialogFooter>
+                        <DialogClose render={<Button variant="outline" disabled={stopping} />}>
+                          {t.common.cancel}
+                        </DialogClose>
+                        <Button variant="destructive" onClick={handleStop} disabled={stopping}>
+                          {stopping ? <Loader2 className="size-4 animate-spin" /> : <StopCircle className="size-4" />}
+                          {stopping ? t.task.stopping : t.task.confirmStop}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                ) : null}
+              </div>
             </div>
             <Progress value={progress} />
           </CardHeader>
@@ -392,7 +450,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <ol className="grid gap-3">
                 {task.stages.map((stage, index) => {
                   const stageProgress = normalizeProgress(stage.progress)
-                  const canRerunStage = task.status !== "running"
+                  const canRerunStage = !isActive
                   const stageInfo = STAGE_INFO[stage.name]
                   return (
                     <li
@@ -495,7 +553,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
             {isFailed ? (
               <div className="mt-4 flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <p className="text-sm text-amber-800">
-                  {t.task.resumeHelp}
+                  {isStopped ? t.task.stoppedNotice : t.task.resumeHelp}
                 </p>
                 <Button onClick={handleResume} disabled={resuming}>
                   {resuming ? <Loader2 className="size-4 animate-spin" /> : <Play className="size-4" />}
@@ -711,7 +769,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <Dialog open={rerunOpen} onOpenChange={setRerunOpen}>
                 <DialogTrigger
                   render={
-                    <Button variant="outline" disabled={!task || isRunning}>
+                    <Button variant="outline" disabled={!task || isActive}>
                       <RotateCw className="size-4" />
                       {t.task.rerunTask}
                     </Button>
@@ -749,7 +807,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
                 <DialogTrigger
                   render={
-                    <Button variant="destructive" disabled={!task || isRunning}>
+                    <Button variant="destructive" disabled={!task || isActive}>
                       <Trash2 className="size-4" />
                       {t.task.deleteTask}
                     </Button>
@@ -779,7 +837,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 </DialogContent>
               </Dialog>
             </div>
-            {isRunning ? (
+            {isActive ? (
               <p className="text-xs text-amber-600">{t.task.runningLocked}</p>
             ) : null}
           </CardContent>

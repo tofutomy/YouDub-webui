@@ -40,6 +40,7 @@ export type Task = {
   asr_language: string | null
   target_language: string | null
   add_subtitles: number | null
+  stop_requested: number | null
 }
 
 export type CookieInfo = {
@@ -133,6 +134,10 @@ export function rerunTask(taskId: string) {
 
 export function resumeTask(taskId: string) {
   return request<Task>(`/api/tasks/${taskId}/resume`, { method: "POST" })
+}
+
+export function stopTask(taskId: string) {
+  return request<Task>(`/api/tasks/${taskId}/stop`, { method: "POST" })
 }
 
 export function rerunStage(taskId: string, stageName: string) {

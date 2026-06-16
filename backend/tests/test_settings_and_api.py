@@ -396,6 +396,67 @@ def test_rerun_task_rejects_running_task(monkeypatch, tmp_path):
     assert database.get_task(task_id)["status"] == "running"
 
 
+def test_stop_running_task_sets_worker_flag(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    requested: list[str] = []
+    monkeypatch.setattr(main.worker, "request_stop", lambda task_id: requested.append(task_id) or True)
+    task_id = database.create_task("https://www.youtube.com/watch?v=stoprunning", task_id="stoprunning")
+    database.update_task(task_id, status="running")
+
+    client = TestClient(main.app)
+    response = client.post(f"/api/tasks/{task_id}/stop")
+
+    assert response.status_code == 200
+    assert requested == [task_id]
+    # The task is still running; the worker is expected to observe the flag and
+    # transition it to failed on its own.
+    assert database.get_task(task_id)["status"] == "running"
+
+
+def test_stop_queued_task_marks_it_failed_immediately(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    requested: list[str] = []
+    monkeypatch.setattr(main.worker, "request_stop", lambda task_id: requested.append(task_id) or True)
+    task_id = database.create_task("https://www.youtube.com/watch?v=stopqueued", task_id="stopqueued")
+    # Task starts in 'queued' status (database default).
+
+    client = TestClient(main.app)
+    response = client.post(f"/api/tasks/{task_id}/stop")
+
+    assert response.status_code == 200
+    assert requested == [task_id]
+    task = database.get_task(task_id)
+    assert task["status"] == "failed"
+    assert "Stopped by user" in (task["error_message"] or "")
+    # Frontend relies on this flag to distinguish user-stops from errors.
+    assert task["stop_requested"] == 1
+    # For a queued task, the stage was never started and stays in 'pending'.
+    download_stage = next(s for s in task["stages"] if s["name"] == "download")
+    assert download_stage["status"] == "pending"
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed"])
+def test_stop_task_rejects_non_active_tasks(monkeypatch, tmp_path, status):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    requested: list[str] = []
+    monkeypatch.setattr(main.worker, "request_stop", lambda task_id: requested.append(task_id) or True)
+    task_id = database.create_task("https://www.youtube.com/watch?v=nostop", task_id="nostop")
+    database.update_task(task_id, status=status)
+
+    client = TestClient(main.app)
+    response = client.post(f"/api/tasks/{task_id}/stop")
+
+    assert response.status_code == 409
+    assert requested == []
+
+
+def test_stop_task_returns_404_for_unknown(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+    response = client.post("/api/tasks/missing-id/stop")
+    assert response.status_code == 404
+
+
 def test_delete_task_skips_session_outside_workfolder(monkeypatch, tmp_path):
     configure_tmp_runtime(monkeypatch, tmp_path)
     task_id = database.create_task("https://www.youtube.com/watch?v=outsidevidx", task_id="outsidevidx")

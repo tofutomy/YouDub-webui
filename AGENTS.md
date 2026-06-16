@@ -10,7 +10,6 @@
 | 启动前端 | `npm.cmd --prefix apps/web run dev -- --hostname 0.0.0.0 --port 3000` |
 | 运行后端测试 | `.\.venv\Scripts\python.exe -m pytest backend\tests` |
 | Lint 前端 | `npm.cmd --prefix apps/web run lint` |
-| 构建前端 | `npm.cmd --prefix apps/web run build` |
 | CLI 跑 pipeline | `.\.venv\Scripts\python.exe scripts\run_pipeline.py <url>` |
 
 PowerShell 可能禁止执行 `npm.ps1`，优先使用 `npm.cmd`。
@@ -57,6 +56,25 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 - 单阶段重跑不会触发重跑后下游阶段，适合某个阶段单独重新执行。
 - 清理产出不级联删除，不会影响下游阶段已有的 output。
 - 已完成的阶段不会被后续重跑覆盖（除非被重置）。
+
+### 阶段产出清理详情
+
+`clear-stage` 只删除该阶段的 output，重置为 pending：
+
+| 阶段 | 清理内容 |
+|------|----------|
+| `download` | `media/video_source.mp4`，`metadata/ytdlp_info.json` 或 `metadata/local_info.json` |
+| `separate` | `media/audio_vocals.wav`，`media/audio_bgm.wav` |
+| `asr` | `metadata/asr.json`、`metadata/asr.raw.funasr.json` 或 `metadata/asr.raw.remote_funasr.json` |
+| `asr_fix` | `metadata/asr_fixed.json` |
+| `translate` | `metadata/translation.{lang}.json`，`metadata/subtitles.{lang}.srt` |
+| `split_audio` | `segments/vocals/*.wav` |
+| `tts` | `segments/tts/*.wav` |
+| `merge_audio` | `tmp/audio_dubbing.wav`，`metadata/timings.json` |
+| `merge_video` | `media/video_final.mp4` |
+
+- 如果需要从某阶段开始重新生成整条下游链路，使用级联重跑（`rerun-stage`）而不是清理产出。
+- 清理产出 + 单独重跑单阶段：先清理，再 `rerun-single-stage` 仅重新执行该阶段。
 
 ## 关键目录与文件
 
@@ -138,7 +156,7 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 - 后端接受到 `WORKFOLDER/_uploads/{task_id}/` 目录，分块写入（1MB 块）。
 - 上传完成后自动转码为 h.264 + aac MP4 格式。
 - 上传限制：默认 4GB，可通过 `LOCAL_UPLOAD_MAX_BYTES` 环境变量调整。
-- Next.js 代理请求体限制为 `2000m`，通过 `next.config.ts` 中 `proxyClientMaxBodySize` 设置。
+- Next.js 代理请求体限制为 `2000mb`，通过 `next.config.ts` 中 `proxyClientMaxBodySize` 设置。
 
 ## ASR 模型路径
 
@@ -239,25 +257,6 @@ FUNASR_REMOTE_HOTWORDS=
 - **MPS 特殊处理**：Whisper 在 MPS 下会被强制回退到 `cpu`，因为 word timestamps 使用 float64 DTW（MPS 不支持）。
 - CUDA 设备可加索引：`cuda:0`、`cuda`（等价于 `cuda:0`）。
 - `validate_runtime_device()` 在任务创建前验证所有受管组件的设备可用性。
-
-## 阶段产出清理规则
-
-`POST /api/tasks/{task_id}/clear-stage/{stage_name}` 只删除该阶段说明中列出的 output，重置该阶段为 pending，不做级联删除。
-
-| 阶段 | 清理内容 |
-|------|----------|
-| `download` | `media/video_source.mp4`，`metadata/ytdlp_info.json` 或 `metadata/local_info.json` |
-| `separate` | `media/audio_vocals.wav`，`media/audio_bgm.wav` |
-| `asr` | `metadata/asr.json`、`metadata/asr.raw.funasr.json` 或 `metadata/asr.raw.remote_funasr.json` |
-| `asr_fix` | `metadata/asr_fixed.json` |
-| `translate` | `metadata/translation.{lang}.json`，`metadata/subtitles.{lang}.srt` |
-| `split_audio` | `segments/vocals/*.wav` |
-| `tts` | `segments/tts/*.wav` |
-| `merge_audio` | `tmp/audio_dubbing.wav`，`metadata/timings.json` |
-| `merge_video` | `media/video_final.mp4` |
-
-- 如果需要从某阶段开始重新生成整条下游链路，使用级联重跑（`rerun-stage`）而不是清理产出。
-- 清理产出 + 单独重跑单阶段：先清理，再 `rerun-single-stage` 仅重新执行该阶段。
 
 ## 环境配置
 
@@ -372,11 +371,7 @@ npm.cmd --prefix apps/web run lint
 6. **首次运行**：Whisper、VoxCPM、Demucs 模型首次运行会自动下载，需要网络和磁盘空间。
 7. **Session 目录**：`WORKFOLDER/{source}/{title}__{task_id}/` 下有 `media/`、`metadata/`、`segments/`、`tmp/`。
 8. **代理**：YouTube 需要代理（SOCKS5 通过 `httpx[socks]` 支持）；Bilibili 自动抓取匿名 cookie。
-9. **Next.js 上传限制**：代理请求体限制已设置为 `2000m`（`next.config.ts` 中 `proxyClientMaxBodySize`）。如需更大上传，需调整此值。
+9. **Next.js 上传限制**：代理请求体限制已设置为 `2000mb`（`next.config.ts` 中 `proxyClientMaxBodySize`）。如需更大上传，需调整此值。
 10. **数据库设置同步**：`.env` 改动需重启后端才生效（`init_db()` 用 `ON CONFLICT DO UPDATE` 同步 settings 默认值）。启动时也会自动从 metadata 回填缺失的任务标题。
-11. **旧任务配置**：旧任务可能缺少 `asr_language/target_language`。当前代码会默认按 `en -> zh` 解析；如果实际方向不同，需要在任务详情里保存正确方向后重跑相关阶段。
-12. **阶段清理不是级联重跑**：清理产出只删当前阶段 output；需要下游重算时使用级联重跑（`rerun-stage`）。
-13. **单阶段重跑不触发下游**：`rerun-single-stage` 只执行目标阶段，之后不会自动跑下游阶段。需要完整链路的用 `rerun-stage`。
-14. **MPS + Whisper**：macOS MPS 设备下 Whisper 会自动回退到 CPU，因为 DTW float64 运算不被 MPS 支持。
-15. **上传文件格式**：仅支持 `.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`，上传后自动转码为 h.264+aac MP4。
-16. **API Key 安全**：保存 OpenAI 设置时，前端不会回显 API Key（显示为 `********`）。设置 `clear_api_key=true` 可清空已保存的 Key。
+11. **API Key 安全**：保存 OpenAI 设置时，前端不会回显 API Key（显示为 `********`）。设置 `clear_api_key=true` 可清空已保存的 Key。
+12. **上传文件格式**：仅支持 `.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`，上传后自动转码为 h.264+aac MP4。

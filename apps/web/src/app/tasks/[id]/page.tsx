@@ -181,9 +181,15 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     setStopping(true)
     setStopError("")
     try {
-      const next = await stopTask(id)
-      setTask(next)
+      await stopTask(id)
       setStopOpen(false)
+      // The stop API only sets the flag for running tasks; the worker
+      // asynchronously marks the task as failed.  Re-fetch after a short
+      // delay so the UI reflects the final "failed" state immediately
+      // instead of waiting up to 2 s for the next poll.
+      await new Promise((r) => setTimeout(r, 500))
+      const fresh = await getTask(id)
+      setTask(fresh)
     } catch (err) {
       setStopError(err instanceof Error ? err.message : t.task.stopError)
     } finally {

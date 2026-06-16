@@ -188,7 +188,7 @@ def _load_vllm_model(model_id: str | None = None):
         dtype="bf16",
         tensor_parallel_size=1,
         gpu_memory_utilization=0.8,
-        max_model_len=4096,
+        max_model_len=8192,
     )
     _VLLM_MODEL_NAME = target
     return _VLLM_MODEL
@@ -696,7 +696,7 @@ def _recognize_speech_vllm(
         str(vocals_file),
         language=funasr_lang,
         itn=True,
-        max_new_tokens=512,
+        max_new_tokens=2048,
         dynamic_silence=dynamic_silence,
     )
     return _finalize_asr_json(vocals_file, session, result, _convert_vllm_result)

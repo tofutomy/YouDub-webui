@@ -25,6 +25,9 @@ transformers>=4.36.2,<5
 pytest
 httpx[socks]
 
+# Qwen3-ASR: local speech recognition with transformers backend (Windows-compatible).
+qwen-asr
+
 # Optional: FunASR vLLM inference engine (Fun-ASR-Nano / GLM-ASR-Nano / LLMASR).
 # Fun-ASR-Nano's standard AutoModel path raises
 # ``NotImplementedError: batch decoding is not implemented``; install vllm

@@ -694,6 +694,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                         <SelectItem value="whisper:large-v3">{t.home.asrWhisperLarge}</SelectItem>
                         <SelectItem value="funasr:iic/SenseVoiceSmall">{t.home.asrSenseVoice}</SelectItem>
                         <SelectItem value="funasr:FunAudioLLM/Fun-ASR-Nano-2512">{t.home.asrFunAsrNano}</SelectItem>
+                        <SelectItem value="qwen3asr:Qwen/Qwen3-ASR-1.7B">{t.home.asrQwen3Asr}</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

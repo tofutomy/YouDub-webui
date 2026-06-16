@@ -160,7 +160,7 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 
 ## ASR 模型路径
 
-前端提供 4 个 ASR 选项，路由到不同的执行路径：
+前端提供 5 个 ASR 选项，路由到不同的执行路径：
 
 | UI 选项 | `asr_model` | 执行路径 |
 |--------|-------------|----------|
@@ -168,9 +168,11 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 | Whisper large-v3 | `whisper:large-v3` | 仍走 Whisper 路径，模型名由 `WHISPER_MODEL` 或任务逻辑决定 |
 | SenseVoiceSmall | `funasr:iic/SenseVoiceSmall` | Windows 主 `.venv` 中的标准 `funasr.AutoModel` |
 | Fun-ASR-Nano | `funasr:FunAudioLLM/Fun-ASR-Nano-2512` | WSL2/Linux 远程 FunASR vLLM 服务 |
+| Qwen3-ASR | `qwen3asr:Qwen/Qwen3-ASR-1.7B` | Windows 主 `.venv` 中的 `qwen-asr` transformers 后端，本地运行无需 vLLM |
 
 ### ASR 路由逻辑
 
+- `asr_model` 带 `qwen3asr:*` 前缀 → Qwen3-ASR 路径（本地 transformers 后端）
 - `asr_model` 带 `funasr:*` 前缀 → FunASR 路径（本地或远程，取决于配置）
 - `asr_model` 为空/null → Whisper `large-v3-turbo`
 - `asr_model` 为 `whisper:large-v3` → Whisper（模型名由 `WHISPER_MODEL` env 决定）
@@ -196,6 +198,18 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 - `words + timestamp` 中标点可能是独立 token。断句应在 `. ? ! ; : , ， 、 。 ！ ？ ； ：` 等标点处发生，逗号也要断。
 - 独立 token 会被拼回正常文本，例如 `I` + `'` + `m` -> `I'm`，`R` + `9` -> `R9`。
 - SenseVoice 特有的 `<|...|>` 标签在结果处理时会被自动去除。
+
+### Qwen3-ASR（transformers 后端）
+
+- 使用 `qwen-asr` 包的 transformers 后端，Windows 原生运行，无需 vLLM 或远程服务。
+- 模型：`Qwen/Qwen3-ASR-1.7B`（1.7B 参数，支持 52 种语言），适配器文件：`backend/app/adapters/qwen3_asr.py`。
+- 时间戳通过 `Qwen3-ForcedAligner-0.6B` 生成词级/字符级时间戳，精度高于 CTC forced alignment。
+- 模型权重自动从 `MODEL_CACHE_DIR/models/Qwen/Qwen3-ASR-1.7B` 加载，ForcedAligner 从 `MODEL_CACHE_DIR/models/Qwen/Qwen3-ForcedAligner-0.6B` 加载。
+- 显存需求：ASR 模型约 3-4GB + ForcedAligner 约 1.5GB，总计约 5GB VRAM（bf16）。
+- 安装：`pip install -U qwen-asr`，可选 `flash-attn` 加速。
+- 原始返回保存到 `metadata/asr.raw.qwen3asr.json` 便于排查。
+- 语言参数自动从任务的 `asr_language` 映射（`zh`→`Chinese`、`en`→`English` 等），未映射的语言设为 `None`（自动检测）。
+- 断句逻辑：按句末标点（`.!?;:。！？；：`）将词级时间戳分组为句子级 utterance。
 
 ### Fun-ASR-Nano + vLLM（本地 vLLM 引擎）
 

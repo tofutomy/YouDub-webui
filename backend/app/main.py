@@ -39,6 +39,7 @@ class TaskCreate(BaseModel):
     target_language: str | None = None
     add_subtitles: bool = True
     asr_model: str | None = None
+    translate_mode: str | None = None
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -180,6 +181,8 @@ def create_task(payload: TaskCreate) -> dict:
             fields["add_subtitles"] = int(payload.add_subtitles)
         if payload.asr_model is not None:
             fields["asr_model"] = payload.asr_model or None
+        if payload.translate_mode is not None:
+            fields["translate_mode"] = payload.translate_mode or None
         if fields:
             database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
@@ -192,6 +195,7 @@ def create_task(payload: TaskCreate) -> dict:
         target_language=payload.target_language,
         add_subtitles=payload.add_subtitles,
         asr_model=payload.asr_model,
+        translate_mode=payload.translate_mode,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -274,6 +278,7 @@ class TaskConfigUpdate(BaseModel):
     asr_language: str | None = None
     target_language: str | None = None
     add_subtitles: bool | None = None
+    translate_mode: str | None = None
 
 
 def _payload_has_field(payload: BaseModel, field: str) -> bool:
@@ -299,6 +304,8 @@ def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
         fields["target_language"] = payload.target_language
     if _payload_has_field(payload, "add_subtitles") and payload.add_subtitles is not None:
         fields["add_subtitles"] = int(payload.add_subtitles)
+    if _payload_has_field(payload, "translate_mode") and payload.translate_mode is not None:
+        fields["translate_mode"] = payload.translate_mode or None
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)

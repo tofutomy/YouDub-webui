@@ -41,6 +41,7 @@ export type Task = {
   target_language: string | null
   add_subtitles: number | null
   stop_requested: number | null
+  translate_mode: string | null
 }
 
 export type CookieInfo = {
@@ -153,6 +154,7 @@ export function updateTaskConfig(taskId: string, config: {
   asr_language?: string
   target_language?: string
   add_subtitles?: boolean
+  translate_mode?: string | null
 }) {
   return request<Task>(`/api/tasks/${taskId}/config`, {
     method: "PATCH",

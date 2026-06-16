@@ -136,6 +136,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [cfgAsrModel, setCfgAsrModel] = useState("")
   const [cfgDirection, setCfgDirection] = useState<"en-zh" | "zh-en">("en-zh")
   const [cfgAddSubtitles, setCfgAddSubtitles] = useState(true)
+  const [cfgTranslateMode, setCfgTranslateMode] = useState("sentence")
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -242,6 +243,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       const tl = task.target_language || "zh"
       setCfgDirection(al === "zh" && tl === "en" ? "zh-en" : "en-zh")
       setCfgAddSubtitles(task.add_subtitles !== 0)
+      setCfgTranslateMode(task.translate_mode || "sentence")
     }
   }
 
@@ -258,6 +260,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
         const parts = cfgDirection.split("-")
         config.asr_language = parts[0]
         config.target_language = parts[1]
+        config.translate_mode = cfgTranslateMode
       } else if (configStageTarget === "merge_video") {
         config.add_subtitles = cfgAddSubtitles
       }
@@ -700,17 +703,31 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                   </div>
                 ) : null}
                 {configStageTarget === "translate" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="cfg-direction">{t.home.localDirectionLabel}</Label>
-                    <Select value={cfgDirection} onValueChange={(v) => setCfgDirection(v as "en-zh" | "zh-en")}>
-                      <SelectTrigger id="cfg-direction" className="h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
-                        <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
-                      </SelectContent>
-                    </Select>
+                  <div className="space-y-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="cfg-direction">{t.home.localDirectionLabel}</Label>
+                      <Select value={cfgDirection} onValueChange={(v) => setCfgDirection(v as "en-zh" | "zh-en")}>
+                        <SelectTrigger id="cfg-direction" className="h-10">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
+                          <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="cfg-translate-mode">{t.home.translateModeLabel}</Label>
+                      <Select value={cfgTranslateMode} onValueChange={(v) => setCfgTranslateMode(v)}>
+                        <SelectTrigger id="cfg-translate-mode" className="h-10">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sentence">{t.home.translateModeSentence}</SelectItem>
+                          <SelectItem value="batch">{t.home.translateModeBatch}</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                 ) : null}
                 {configStageTarget === "merge_video" ? (

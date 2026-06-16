@@ -371,10 +371,11 @@ class PipelineRunner:
         session = _require(self.artifacts.session, "session")
         asr_file = _require(self.artifacts.asr_fixed_file, "asr_fixed_file")
         settings = database.get_openai_settings()
+        settings["translate_mode"] = task.get("translate_mode") or "sentence"
         source = get_source_for_task(task)
         self.stage_message(
             "translate",
-            f"Using model {settings['model']} at {settings['base_url']} ({source.asr_language}->{source.target_language})",
+            f"Using model {settings['model']} at {settings['base_url']} ({source.asr_language}->{source.target_language}) [mode={settings['translate_mode']}])",
         )
         self.artifacts.translation_file = translate_asr(asr_file, session, settings, source)
         items = _json.loads(self.artifacts.translation_file.read_text(encoding="utf-8"))["translation"]

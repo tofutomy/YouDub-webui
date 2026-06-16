@@ -101,6 +101,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN asr_model TEXT")
         if "stop_requested" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN stop_requested INTEGER DEFAULT 0")
+        if "translate_mode" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN translate_mode TEXT")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -158,16 +160,17 @@ def create_task(
     target_language: str | None = None,
     add_subtitles: bool = True,
     asr_model: str | None = None,
+    translate_mode: str | None = None,
 ) -> str:
     new_id = task_id or str(uuid.uuid4())
     created_at = now_iso()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model)
-            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode),
         )
         conn.executemany(
             """

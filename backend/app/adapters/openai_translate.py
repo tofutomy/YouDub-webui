@@ -11,7 +11,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
 
 from ..sources import SourceConfig
-from ._translate_prompts import PREPROCESS_PROMPT, TRANSLATE_RULES
+from ._translate_prompts import BATCH_TRANSLATE_RULES, PREPROCESS_PROMPT, TRANSLATE_RULES
 from .openai_client import normalize_openai_base_url
 
 log = logging.getLogger(__name__)
@@ -21,6 +21,8 @@ PREPROCESS_RETRY = 2
 TRANSLATE_RETRY = 2
 DESCRIPTION_LIMIT = 500
 DEFAULT_CONCURRENCY = 50
+DEFAULT_BATCH_SIZE = 15
+VALID_MODES = ("sentence", "batch")
 
 
 class HotwordItem(BaseModel):
@@ -207,6 +209,102 @@ def translate_batch(
         ))
 
 
+def _translate_batch_context_chunk(
+    chunk: list[str],
+    target_language: str,
+    client: OpenAI,
+    model: str,
+    system: str,
+    expected_count: int,
+) -> list[str]:
+    user = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
+    last_error: Exception | None = None
+    for attempt in range(TRANSLATE_RETRY + 1):
+        data = _call_json(client, model, system, user)
+        translations = data.get("translations")
+        if isinstance(translations, list) and len(translations) == expected_count:
+            return [_post_process(str(t), target_language) for t in translations]
+        actual = len(translations) if isinstance(translations, list) else type(translations)
+        last_error = ValueError(f"expected {expected_count}, got {actual}")
+        log.warning("batch chunk attempt %d: %s", attempt + 1, last_error)
+        # On retry, reinforce the count requirement
+        user = (
+            f"Translate exactly {expected_count} sentences. "
+            f"Return exactly {expected_count} items in the translations array.\n\n"
+            + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
+        )
+    # Fallback: translate each sentence individually
+    log.warning("batch chunk failed after retries, falling back to per-sentence: %s", last_error)
+    system_single = TRANSLATE_RULES[target_language].format(
+        summary="(none)", hotwords="(none)", corrections="(none)",
+        title="(unknown)", uploader="(unknown)", description="(none)",
+    )
+    return [
+        _post_process(
+            translate_sentence(t, target_language, client, model, system_single),
+            target_language,
+        )
+        for t in chunk
+    ]
+
+
+def translate_batch_context(
+    texts: list[str],
+    source: SourceConfig,
+    meta: dict[str, Any],
+    pre: PreprocessResponse,
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    concurrency: int = DEFAULT_CONCURRENCY,
+    batch_size: int = DEFAULT_BATCH_SIZE,
+) -> list[str]:
+    if not texts:
+        return []
+
+    rules = BATCH_TRANSLATE_RULES[source.target_language]
+    system = rules.format(
+        summary=pre.summary or "(none)",
+        hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
+        corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
+        **_meta_view(meta),
+    )
+    client = _client(base_url, api_key)
+
+    half = max(1, batch_size // 2)
+    chunks: list[tuple[int, list[str]]] = []
+    for start in range(0, len(texts), half):
+        end = min(start + batch_size, len(texts))
+        chunks.append((start, texts[start:end]))
+        if end >= len(texts):
+            break
+
+    log.info(
+        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d)",
+        len(texts), len(chunks), batch_size, concurrency,
+    )
+
+    def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
+        idx, chunk = item
+        result = _translate_batch_context_chunk(
+            chunk, source.target_language, client, model, system, len(chunk),
+        )
+        return (idx, result)
+
+    results: list[tuple[int, list[str]]] = []
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        results = list(pool.map(_do_chunk, chunks))
+
+    merged: list[str | None] = [None] * len(texts)
+    for offset, chunk_translations in results:
+        for i, t in enumerate(chunk_translations):
+            pos = offset + i
+            if pos < len(merged) and merged[pos] is None:
+                merged[pos] = t
+    return [t or "" for t in merged]
+
+
 def _read_meta(session: Path) -> dict[str, Any]:
     info_file = session / "metadata" / "ytdlp_info.json"
     if not info_file.exists():
@@ -257,9 +355,30 @@ def translate_asr(
 
     api = {key: settings[key] for key in API_SETTING_KEYS if key in settings}
     pre = preprocess(full_text, meta, source, **api)
-    dst_list = translate_batch(
-        texts, source, meta, pre, **api, concurrency=_concurrency_from(settings)
+
+    # Save preprocess output for debugging / analysis
+    pre_file = session / "metadata" / "preprocess.json"
+    pre_file.write_text(
+        json.dumps(pre.model_dump(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
     )
+    log.info("preprocess saved to %s", pre_file.name)
+
+    mode = (settings.get("translate_mode") or "sentence").strip().lower()
+    if mode not in VALID_MODES:
+        mode = "sentence"
+    concurrency = _concurrency_from(settings)
+
+    if mode == "batch":
+        log.info("translate mode=batch")
+        dst_list = translate_batch_context(
+            texts, source, meta, pre, **api, concurrency=concurrency,
+        )
+    else:
+        log.info("translate mode=sentence")
+        dst_list = translate_batch(
+            texts, source, meta, pre, **api, concurrency=concurrency,
+        )
 
     translation = [
         {

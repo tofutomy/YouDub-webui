@@ -297,9 +297,20 @@ class PipelineRunner:
 
         asr_model = task.get("asr_model") or ""
         if asr_model.startswith("funasr:"):
-            from .adapters.funasr_asr import recognize_speech
+            from .adapters import remote_funasr_asr
+
             model_id = asr_model.split(":", 1)[1] if ":" in asr_model else None
-            self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language, model_id=model_id)
+            if remote_funasr_asr.is_configured() and remote_funasr_asr.requires_remote_vllm(model_id):
+                self.stage_message("asr", "Using remote FunASR service")
+                self.artifacts.asr_file = remote_funasr_asr.recognize_speech(
+                    vocals_file, session, language=source.asr_language, model_id=model_id
+                )
+            else:
+                from .adapters.funasr_asr import recognize_speech
+
+                self.artifacts.asr_file = recognize_speech(
+                    vocals_file, session, language=source.asr_language, model_id=model_id
+                )
         else:
             from .adapters.whisper_asr import recognize_speech
             self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)

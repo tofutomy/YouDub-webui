@@ -9,6 +9,8 @@ from .youtube import is_bilibili_url, is_local_en_to_zh_url, is_local_zh_to_en_u
 
 
 LANG_NAMES = {"en": "English", "zh": "Simplified Chinese"}
+DEFAULT_ASR_LANGUAGE = "en"
+DEFAULT_TARGET_LANGUAGE = "zh"
 
 
 @dataclass(frozen=True)
@@ -78,20 +80,33 @@ def detect_source(url: str) -> SourceConfig:
     raise ValueError(f"No source matches URL: {url}")
 
 
+def _opposite_language(language: str) -> str:
+    return "zh" if language == "en" else "en"
+
+
+def _task_languages(task: dict, source: SourceConfig) -> tuple[str, str]:
+    asr_language = (task.get("asr_language") or "").strip()
+    target_language = (task.get("target_language") or "").strip()
+    if asr_language and target_language:
+        return asr_language, target_language
+    if asr_language:
+        return asr_language, _opposite_language(asr_language)
+    if target_language:
+        return _opposite_language(target_language), target_language
+    if source.name == "local":
+        return source.asr_language, source.target_language
+    return DEFAULT_ASR_LANGUAGE, DEFAULT_TARGET_LANGUAGE
+
+
 def get_source_for_task(task: dict) -> SourceConfig:
-    """Get source config for a task, using task-stored language overrides if available."""
+    """Get source config for a task, using task-stored translation direction."""
     source = detect_source(task["url"])
-    asr_language = task.get("asr_language")
-    target_language = task.get("target_language")
-    # If no overrides stored, use the default source config
-    if not asr_language and not target_language:
-        return source
-    # Override with task-stored values, falling back to source defaults
+    asr_language, target_language = _task_languages(task, source)
     return SourceConfig(
         name=source.name,
         matches=source.matches,
         use_proxy=source.use_proxy,
         cookie_filename=source.cookie_filename,
-        asr_language=asr_language or source.asr_language,
-        target_language=target_language or source.target_language,
+        asr_language=asr_language,
+        target_language=target_language,
     )

@@ -240,9 +240,178 @@ def test_convert_standard_result_with_ms_values() -> None:
 
 
 def test_convert_standard_result_fallback_to_text() -> None:
-    result = {"text": "  hello world  "}
+    result = {"text": "  hello world. good day.  "}
     utterances = _convert_standard_result(result, 5000)
-    assert utterances == [{"text": "hello world", "start_time": 0, "end_time": 5000, "words": []}]
+    assert utterances == [
+        {"text": "hello world.", "start_time": 0, "end_time": 2857, "words": []},
+        {"text": "good day.", "start_time": 2857, "end_time": 5000, "words": []},
+    ]
+
+
+def test_convert_standard_result_accepts_sentence_key() -> None:
+    result = {
+        "text": "hello world",
+        "sentence_info": [{"sentence": "hello", "start": 0, "end": 1200}],
+    }
+    utterances = _convert_standard_result(result, 3000)
+    assert utterances == [{"text": "hello", "start_time": 0, "end_time": 1200, "words": []}]
+
+
+def test_convert_standard_result_uses_token_timestamps() -> None:
+    result = {
+        "text": "hi. ok.",
+        "timestamp": [
+            [0, 300],
+            [300, 600],
+            [600, 700],
+            [900, 1200],
+            [1200, 1500],
+            [1500, 1600],
+        ],
+    }
+    utterances = _convert_standard_result(result, 2000)
+    assert utterances == [
+        {"text": "hi.", "start_time": 0, "end_time": 700, "words": []},
+        {"text": "ok.", "start_time": 900, "end_time": 1600, "words": []},
+    ]
+
+
+def test_convert_standard_result_uses_word_timestamps_for_english() -> None:
+    result = {
+        "text": "<|en|><|Speech|>A lot of you asked. Good news I am.",
+        "timestamp": [
+            [0, 100],
+            [100, 200],
+            [200, 300],
+            [300, 400],
+            [400, 600],
+            [800, 1000],
+            [1000, 1200],
+            [1200, 1300],
+            [1300, 1500],
+        ],
+    }
+    utterances = _convert_standard_result(result, 2000)
+    assert utterances == [
+        {
+            "text": "A lot of you asked.",
+            "start_time": 0,
+            "end_time": 600,
+            "words": [
+                {"text": "A", "start_time": 0, "end_time": 100},
+                {"text": "lot", "start_time": 100, "end_time": 200},
+                {"text": "of", "start_time": 200, "end_time": 300},
+                {"text": "you", "start_time": 300, "end_time": 400},
+                {"text": "asked.", "start_time": 400, "end_time": 600},
+            ],
+        },
+        {
+            "text": "Good news I am.",
+            "start_time": 800,
+            "end_time": 1500,
+            "words": [
+                {"text": "Good", "start_time": 800, "end_time": 1000},
+                {"text": "news", "start_time": 1000, "end_time": 1200},
+                {"text": "I", "start_time": 1200, "end_time": 1300},
+                {"text": "am.", "start_time": 1300, "end_time": 1500},
+            ],
+        },
+    ]
+
+
+def test_convert_standard_result_uses_raw_words_when_punctuation_is_separate() -> None:
+    result = {
+        "text": "<|en|><|Speech|>I'm here. Are you?",
+        "words": ["I", "'", "m", "here", ".", "Are", "you", "?"],
+        "timestamp": [
+            [0, 100],
+            [100, 150],
+            [150, 220],
+            [300, 450],
+            [450, 500],
+            [800, 950],
+            [950, 1100],
+            [1100, 1150],
+        ],
+    }
+    utterances = _convert_standard_result(result, 2000)
+    assert [item["text"] for item in utterances] == ["I'm here.", "Are you?"]
+    assert utterances[0]["start_time"] == 0
+    assert utterances[0]["end_time"] == 500
+    assert utterances[1]["start_time"] == 800
+    assert utterances[1]["end_time"] == 1150
+    assert [word["text"] for word in utterances[0]["words"]] == ["I", "'", "m", "here", "."]
+
+
+def test_convert_standard_result_joins_letter_number_tokens() -> None:
+    result = {
+        "text": "playing R9.",
+        "words": ["playing", "R", "9", "."],
+        "timestamp": [[0, 100], [200, 300], [300, 400], [400, 450]],
+    }
+    utterances = _convert_standard_result(result, 1000)
+    assert utterances[0]["text"] == "playing R9."
+
+
+def test_convert_standard_result_splits_long_raw_words_on_soft_punctuation() -> None:
+    words = [
+        "This", "is", "a", "long", "part", "that", "keeps", "going", "with",
+        "many", "tokens", "before", "the", "first", "comma", ",", "then",
+        "the", "next", "part", "ends", ".",
+    ]
+    result = {
+        "text": " ".join(words).replace(" ,", ",").replace(" .", "."),
+        "words": words,
+        "timestamp": [[index * 100, index * 100 + 80] for index in range(len(words))],
+    }
+    utterances = _convert_standard_result(result, 3000)
+    assert [item["text"] for item in utterances] == [
+        "This is a long part that keeps going with many tokens before the first comma,",
+        "then the next part ends.",
+    ]
+
+    many_words = [f"word{i}" for i in range(22)] + [",", "tail", "."]
+    long_result = {
+        "text": " ".join(many_words).replace(" ,", ",").replace(" .", "."),
+        "words": many_words,
+        "timestamp": [[index * 100, index * 100 + 80] for index in range(len(many_words))],
+    }
+    long_utterances = _convert_standard_result(long_result, 4000)
+    assert len(long_utterances) == 2
+    assert long_utterances[0]["text"].endswith(",")
+    assert long_utterances[1]["text"] == "tail."
+
+
+def test_convert_standard_result_splits_raw_words_on_chinese_comma() -> None:
+    result = {
+        "text": "你好，世界。",
+        "words": ["你", "好", "，", "世", "界", "。"],
+        "timestamp": [[0, 100], [100, 200], [200, 250], [300, 400], [400, 500], [500, 550]],
+    }
+    utterances = _convert_standard_result(result, 1000)
+    assert [item["text"] for item in utterances] == ["你好，", "世界。"]
+
+
+def test_convert_standard_result_falls_back_when_timestamps_are_bad() -> None:
+    result = {
+        "text": (
+            "<|en|><|HAPPY|><|Speech|><|withitn|>"
+            "A lot of you have asked me if I'm gonna be playing R9 Good news I am, "
+            "even though I'm sincerely very terrified, I'm frankly not sure that I'll be able "
+            "to make it through playing the whole thing. "
+            "<|en|><|HAPPY|><|Speech|><|withitn|>"
+            "So I hope I get to see you in the live streams."
+        ),
+        "timestamp": [[0, 0], [0, 0]],
+    }
+    utterances = _convert_standard_result(result, 10000)
+    texts = [item["text"] for item in utterances]
+    assert all("<|" not in text for text in texts)
+    assert texts[0].startswith("A lot of you")
+    assert "A lot" in texts[0]
+    assert any(text.startswith("even though") for text in texts)
+    assert texts[-1] == "So I hope I get to see you in the live streams."
+    assert all(item["end_time"] > item["start_time"] for item in utterances)
 
 
 def test_convert_standard_result_empty_text() -> None:

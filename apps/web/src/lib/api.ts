@@ -144,7 +144,7 @@ export function rerunSingleStage(taskId: string, stageName: string) {
 }
 
 export function updateTaskConfig(taskId: string, config: {
-  asr_model?: string
+  asr_model?: string | null
   asr_language?: string
   target_language?: string
   add_subtitles?: boolean

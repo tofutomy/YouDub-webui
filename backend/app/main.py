@@ -170,6 +170,17 @@ def create_task(payload: TaskCreate) -> dict:
 
     existing_id = database.find_task_by_video_id(video_id)
     if existing_id:
+        fields: dict[str, object] = {}
+        if payload.asr_language is not None:
+            fields["asr_language"] = payload.asr_language
+        if payload.target_language is not None:
+            fields["target_language"] = payload.target_language
+        if payload.add_subtitles is not None:
+            fields["add_subtitles"] = int(payload.add_subtitles)
+        if payload.asr_model is not None:
+            fields["asr_model"] = payload.asr_model or None
+        if fields:
+            database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
 
     _ensure_runtime_ready()
@@ -264,6 +275,13 @@ class TaskConfigUpdate(BaseModel):
     add_subtitles: bool | None = None
 
 
+def _payload_has_field(payload: BaseModel, field: str) -> bool:
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    return field in fields_set
+
+
 @app.patch("/api/tasks/{task_id}/config")
 def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
     task = database.get_task(task_id)
@@ -272,13 +290,13 @@ def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
     fields: dict[str, object] = {}
-    if payload.asr_model is not None:
-        fields["asr_model"] = payload.asr_model
-    if payload.asr_language is not None:
+    if _payload_has_field(payload, "asr_model"):
+        fields["asr_model"] = payload.asr_model or None
+    if _payload_has_field(payload, "asr_language") and payload.asr_language is not None:
         fields["asr_language"] = payload.asr_language
-    if payload.target_language is not None:
+    if _payload_has_field(payload, "target_language") and payload.target_language is not None:
         fields["target_language"] = payload.target_language
-    if payload.add_subtitles is not None:
+    if _payload_has_field(payload, "add_subtitles") and payload.add_subtitles is not None:
         fields["add_subtitles"] = int(payload.add_subtitles)
     if fields:
         database.update_task(task_id, **fields)
@@ -421,7 +439,14 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
         return
 
     targets: list[Path] = []
-    if stage_name == "asr":
+    if stage_name == "download":
+        targets.append(session / "media" / "video_source.mp4")
+        targets.append(session / "metadata" / "ytdlp_info.json")
+        targets.append(session / "metadata" / "local_info.json")
+    elif stage_name == "separate":
+        targets.append(session / "media" / "audio_vocals.wav")
+        targets.append(session / "media" / "audio_bgm.wav")
+    elif stage_name == "asr":
         targets.append(session / "metadata" / "asr.json")
     elif stage_name == "asr_fix":
         targets.append(session / "metadata" / "asr_fixed.json")
@@ -433,13 +458,11 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
     elif stage_name == "split_audio":
         vocals_dir = session / "segments" / "vocals"
         if vocals_dir.exists():
-            import shutil
-            shutil.rmtree(vocals_dir)
+            targets.extend(vocals_dir.glob("*.wav"))
     elif stage_name == "tts":
         tts_dir = session / "segments" / "tts"
         if tts_dir.exists():
-            import shutil
-            shutil.rmtree(tts_dir)
+            targets.extend(tts_dir.glob("*.wav"))
     elif stage_name == "merge_audio":
         targets.append(session / "tmp" / "audio_dubbing.wav")
         targets.append(session / "metadata" / "timings.json")

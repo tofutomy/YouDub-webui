@@ -18,6 +18,10 @@ pydub
 librosa
 audiostretchy
 numpy
+# FunASR and VoxCPM depend on HuggingFace Transformers APIs that are still
+# safest on the 4.x line. Keep vLLM-only dependency churn out of the Windows
+# application environment.
+transformers>=4.36.2,<5
 pytest
 httpx[socks]
 
@@ -26,5 +30,6 @@ httpx[socks]
 # ``NotImplementedError: batch decoding is not implemented``; install vllm
 # and set FUNASR_USE_VLLM=auto/on to enable.
 # Requirements: NVIDIA GPU with >= 8 GB VRAM, CUDA >= 11.8.
-# Windows: pick a vllm wheel matching the installed CUDA runtime.
+# Native Windows is not a supported vLLM runtime; use WSL2/Linux/Docker or
+# configure FUNASR_REMOTE_BASE_URL to call a separate FunASR/vLLM service.
 # vllm>=0.10.0

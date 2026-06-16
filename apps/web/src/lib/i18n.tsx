@@ -330,7 +330,7 @@ export const STAGE_INFO: Record<string, StageInfo> = {
   download: {
     description: { en: "Download the video from YouTube/Bilibili, or import a local file.", zh: "从 YouTube/Bilibili 下载视频，或导入本地文件。" },
     input: { en: "Video URL or local file", zh: "视频链接或本地文件" },
-    output: { en: "media/video_source.mp4\nmetadata/ytdlp_info.json", zh: "media/video_source.mp4\nmetadata/ytdlp_info.json" },
+    output: { en: "media/video_source.mp4\nmetadata/ytdlp_info.json or metadata/local_info.json", zh: "media/video_source.mp4\nmetadata/ytdlp_info.json or metadata/local_info.json" },
   },
   separate: {
     description: { en: "Use Demucs to separate the audio into vocals and background music (BGM).", zh: "使用 Demucs 将音频分离为人声和背景音乐（BGM）。" },

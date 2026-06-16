@@ -13,4 +13,5 @@ if str(ROOT) not in sys.path:
 @pytest.fixture(autouse=True)
 def default_test_device(monkeypatch):
     monkeypatch.setenv("DEVICE", "cpu")
+    monkeypatch.setenv("FUNASR_REMOTE_AUTOSTART", "false")
 

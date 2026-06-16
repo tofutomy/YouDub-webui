@@ -49,7 +49,13 @@ _LLM_BASED_MODEL_KEYWORDS = (
 
 # Per-character timestamps come back from vLLM via CTC forced alignment;
 # we re-group them into coarse sentence segments using these terminators.
-_SENTENCE_PUNCTUATION = re.compile(r"([。！？.!?\n]+)")
+_SENTENCE_PUNCTUATION = re.compile(r"([.!?;:\n\u3002\uff01\uff1f\uff1b\uff1a]+)")
+_SOFT_SENTENCE_PUNCTUATION = re.compile(r"([,\u3001\uff0c])")
+_SENSEVOICE_TAG = re.compile(r"<\|[^|>]+\|>")
+_MAX_FALLBACK_CHARS = 120
+_NO_SPACE_BEFORE = set(".,!?;:%)]}\u3002\uff0c\u3001\uff01\uff1f\uff1b\uff1a")
+_NO_SPACE_AFTER = set("([{\u201c\u2018")
+_APOSTROPHES = {"'", "\u2019"}
 
 _LANG_TO_FUNASR = {
     "zh": "zh",
@@ -192,24 +198,300 @@ def _to_ms(seconds: float) -> int:
     return int(round(float(seconds) * 1000))
 
 
+def _time_value_to_ms(value, default: int = 0) -> int:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return default
+    if number > 100000:
+        return int(round(number))
+    return _to_ms(number / 1000.0) if number > 1000 else _to_ms(number)
+
+
+def _clean_asr_text(text: str) -> str:
+    cleaned = _SENSEVOICE_TAG.sub("", text or "")
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def _split_long_chunk(chunk: str) -> list[str]:
+    if len(chunk) <= _MAX_FALLBACK_CHARS:
+        return [chunk]
+    parts: list[str] = []
+    current: list[str] = []
+    for char in chunk:
+        current.append(char)
+        if _SOFT_SENTENCE_PUNCTUATION.match(char) and len("".join(current).strip()) >= 40:
+            parts.append("".join(current).strip())
+            current = []
+    trailing = "".join(current).strip()
+    if trailing:
+        parts.append(trailing)
+    if len(parts) > 1 and all(len(part) <= _MAX_FALLBACK_CHARS * 1.5 for part in parts):
+        return parts
+
+    words = chunk.split()
+    if len(words) <= 1:
+        return [chunk]
+    parts = []
+    current_words: list[str] = []
+    for word in words:
+        tentative = " ".join([*current_words, word])
+        if current_words and len(tentative) > _MAX_FALLBACK_CHARS:
+            parts.append(" ".join(current_words))
+            current_words = [word]
+        else:
+            current_words.append(word)
+    if current_words:
+        parts.append(" ".join(current_words))
+    return parts
+
+
+def _split_text_to_sentences(text: str) -> list[str]:
+    chunks: list[str] = []
+    current: list[str] = []
+    for char in _clean_asr_text(text):
+        if char.isspace() and not current:
+            continue
+        current.append(char)
+        if _SENTENCE_PUNCTUATION.match(char):
+            chunk = "".join(current).strip()
+            if chunk:
+                chunks.extend(_split_long_chunk(chunk))
+            current = []
+    trailing = "".join(current).strip()
+    if trailing:
+        chunks.extend(_split_long_chunk(trailing))
+    return chunks
+
+
+def _fallback_sentences_by_duration(text: str, duration_ms: int) -> list[dict]:
+    chunks = _split_text_to_sentences(text)
+    if not chunks:
+        return []
+    weights = [max(1, len(chunk.strip())) for chunk in chunks]
+    cursor = 0
+    utterances: list[dict] = []
+    for index, (chunk, weight) in enumerate(zip(chunks, weights)):
+        elapsed_weight = sum(weights[: index + 1])
+        end_ms = duration_ms if index == len(chunks) - 1 else int(round(duration_ms * elapsed_weight / sum(weights)))
+        if end_ms <= cursor:
+            end_ms = min(duration_ms, cursor + 1)
+        utterances.append({
+            "text": chunk,
+            "start_time": cursor,
+            "end_time": end_ms,
+            "words": [],
+        })
+        cursor = end_ms
+    return utterances
+
+
+def _timestamp_pair_to_ms(ts) -> tuple[int, int] | None:
+    if isinstance(ts, dict):
+        start = ts.get("start_time", ts.get("start"))
+        end = ts.get("end_time", ts.get("end"))
+        return _time_value_to_ms(start), _time_value_to_ms(end)
+    if isinstance(ts, (list, tuple)) and len(ts) >= 2:
+        return int(round(float(ts[0]))), int(round(float(ts[1])))
+    return None
+
+
+def _is_cjk_char(char: str) -> bool:
+    if not char:
+        return False
+    code = ord(char)
+    return (
+        0x3400 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x3040 <= code <= 0x30FF
+        or 0xAC00 <= code <= 0xD7AF
+    )
+
+
+def _tokens_to_text(tokens: list[str]) -> str:
+    text = ""
+    previous_token = ""
+    for raw_token in tokens:
+        token = str(raw_token or "").strip()
+        if not token:
+            continue
+        if not text:
+            text = token
+            previous_token = token
+            continue
+        previous = text[-1]
+        first = token[0]
+        if (
+            token in _APOSTROPHES
+            or previous in _APOSTROPHES
+            or (len(previous_token) == 1 and previous_token.isalpha() and token.isdigit())
+            or first in _NO_SPACE_BEFORE
+            or previous in _NO_SPACE_AFTER
+            or (_is_cjk_char(previous) and _is_cjk_char(first))
+        ):
+            text += token
+        else:
+            text += " " + token
+        previous_token = token
+    return text.strip()
+
+
+def _word_items_to_utterance(items: list[dict]) -> dict | None:
+    if not items:
+        return None
+    text = _tokens_to_text([item["text"] for item in items])
+    if not text:
+        return None
+    return {
+        "text": text,
+        "start_time": items[0]["start_time"],
+        "end_time": items[-1]["end_time"],
+        "words": items,
+    }
+
+
+def _word_list_timestamps_to_sentences(words: list | None, timestamps: list) -> list[dict]:
+    if not isinstance(words, list) or not words or not timestamps:
+        return []
+    if len(timestamps) < max(1, int(len(words) * 0.8)):
+        return []
+
+    utterances: list[dict] = []
+    current: list[dict] = []
+
+    def emit() -> None:
+        nonlocal current
+        utterance = _word_items_to_utterance(current)
+        if utterance:
+            utterances.append(utterance)
+        current = []
+
+    for raw_word, ts in zip(words, timestamps):
+        token = str(raw_word or "").strip()
+        if not token:
+            continue
+        pair = _timestamp_pair_to_ms(ts)
+        if pair is None:
+            return []
+        start_ms, end_ms = pair
+        if end_ms <= start_ms:
+            return []
+        current.append({"text": token, "start_time": start_ms, "end_time": end_ms})
+        current_text = _tokens_to_text([item["text"] for item in current])
+        if (
+            _SENTENCE_PUNCTUATION.fullmatch(token)
+            or _SENTENCE_PUNCTUATION.search(token)
+            or _SOFT_SENTENCE_PUNCTUATION.fullmatch(token)
+            or _SOFT_SENTENCE_PUNCTUATION.search(token)
+        ):
+            emit()
+
+    emit()
+    return utterances
+
+
+def _word_timestamps_to_sentences(text: str, timestamps: list) -> list[dict]:
+    words = [match.group(0) for match in re.finditer(r"\S+", text)]
+    if not words or not timestamps:
+        return []
+    # SenseVoice/standard FunASR often returns word-level timestamps for
+    # whitespace-delimited languages. Treat the timestamps as word-level when
+    # they are close to the word count; otherwise let the char-level fallback try.
+    if abs(len(timestamps) - len(words)) > max(2, int(len(words) * 0.2)):
+        return []
+
+    utterances: list[dict] = []
+    cur_words: list[dict] = []
+    cur_text: list[str] = []
+    for word, ts in zip(words, timestamps):
+        pair = _timestamp_pair_to_ms(ts)
+        if pair is None:
+            return []
+        start_ms, end_ms = pair
+        if end_ms <= start_ms:
+            return []
+        word_item = {"text": word, "start_time": start_ms, "end_time": end_ms}
+        cur_words.append(word_item)
+        cur_text.append(word)
+        if _SENTENCE_PUNCTUATION.search(word):
+            utterances.append({
+                "text": " ".join(cur_text).strip(),
+                "start_time": cur_words[0]["start_time"],
+                "end_time": cur_words[-1]["end_time"],
+                "words": cur_words,
+            })
+            cur_words = []
+            cur_text = []
+
+    if cur_words:
+        utterances.append({
+            "text": " ".join(cur_text).strip(),
+            "start_time": cur_words[0]["start_time"],
+            "end_time": cur_words[-1]["end_time"],
+            "words": cur_words,
+        })
+    return utterances
+
+
+def _timestamp_pairs_to_sentences(text: str, timestamps: list) -> list[dict]:
+    text = _clean_asr_text(text)
+    if not text or not timestamps:
+        return []
+    word_level = _word_timestamps_to_sentences(text, timestamps)
+    if word_level:
+        return word_level
+
+    normalized: list[dict] = []
+    chars = (char for char in text if not char.isspace())
+    for token, ts in zip(chars, timestamps):
+        if isinstance(ts, dict):
+            start = ts.get("start_time", ts.get("start"))
+            end = ts.get("end_time", ts.get("end"))
+            normalized.append({
+                "token": ts.get("token", token),
+                "start_time": _time_value_to_ms(start) / 1000.0,
+                "end_time": _time_value_to_ms(end) / 1000.0,
+            })
+        elif isinstance(ts, (list, tuple)) and len(ts) >= 2:
+            normalized.append({
+                "token": token,
+                "start_time": float(ts[0]) / 1000.0,
+                "end_time": float(ts[1]) / 1000.0,
+            })
+    nonspace_count = sum(1 for char in text if not char.isspace())
+    if len(normalized) < max(1, int(nonspace_count * 0.8)):
+        return []
+    return _group_chars_to_sentences(text, normalized)
+
+
+def _timestamps_are_usable(utterances: list[dict], duration_ms: int) -> bool:
+    if not utterances:
+        return False
+    previous_end = -1
+    for utterance in utterances:
+        start = int(utterance.get("start_time", 0))
+        end = int(utterance.get("end_time", 0))
+        if end <= start:
+            return False
+        if start < previous_end:
+            return False
+        previous_end = end
+    return True
+
+
 def _convert_standard_result(result: dict, duration_ms: int) -> list[dict]:
     """Convert a standard FunASR AutoModel result to YouDub utterances."""
     utterances: list[dict] = []
     sentences = result.get("sentence_info") or result.get("sentences") or []
     if sentences:
         for sent in sentences:
-            text = sent.get("text", "").strip()
+            text = _clean_asr_text(sent.get("text") or sent.get("sentence") or "")
             if not text:
                 continue
-            start_raw = sent.get("start", 0)
-            end_raw = sent.get("end", 0)
-            # FunASR may return ms or seconds depending on the model.
-            if start_raw > 100000:
-                start_ms = int(start_raw)
-                end_ms = int(end_raw)
-            else:
-                start_ms = _to_ms(start_raw / 1000.0) if start_raw > 1000 else _to_ms(start_raw)
-                end_ms = _to_ms(end_raw / 1000.0) if end_raw > 1000 else _to_ms(end_raw)
+            start_ms = _time_value_to_ms(sent.get("start", sent.get("start_time")), 0)
+            end_ms = _time_value_to_ms(sent.get("end", sent.get("end_time")), duration_ms)
+            if end_ms <= start_ms:
+                end_ms = min(duration_ms, start_ms + 1)
             utterances.append({
                 "text": text,
                 "start_time": start_ms,
@@ -217,14 +499,16 @@ def _convert_standard_result(result: dict, duration_ms: int) -> list[dict]:
                 "words": [],
             })
     else:
-        text = result.get("text", "").strip()
+        text = _clean_asr_text(result.get("text", ""))
         if text:
-            utterances.append({
-                "text": text,
-                "start_time": 0,
-                "end_time": duration_ms,
-                "words": [],
-            })
+            timestamps = result.get("timestamp") or result.get("timestamps") or []
+            timestamped = _word_list_timestamps_to_sentences(result.get("words"), timestamps)
+            if not timestamped:
+                timestamped = _timestamp_pairs_to_sentences(text, timestamps)
+            if _timestamps_are_usable(timestamped, duration_ms):
+                utterances.extend(timestamped)
+            else:
+                utterances.extend(_fallback_sentences_by_duration(text, duration_ms))
     return utterances
 
 
@@ -279,6 +563,8 @@ def _group_chars_to_sentences(text: str, timestamps: list[dict]) -> list[dict]:
 
     for ch in text:
         if ch.isspace():
+            if cur_chars and not cur_chars[-1].isspace():
+                cur_chars.append(" ")
             continue
         if si < len(char_stream):
             _, c_start, c_end = char_stream[si]
@@ -342,6 +628,12 @@ def _finalize_asr_json(
         raise RuntimeError("FunASR did not return any results.")
 
     raw = result[0] if isinstance(result, list) else result
+    raw_output_file = metadata_dir / "asr.raw.funasr.json"
+    raw_output_file.write_text(
+        json.dumps(raw, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+
     duration_ms = len(AudioSegment.from_file(vocals_file))
     utterances = convert_fn(raw, duration_ms)
     if not utterances:
@@ -378,6 +670,9 @@ def _recognize_speech_standard(
         use_itn=True,
         merge_vad=True,
         merge_length_s=15,
+        sentence_timestamp=True,
+        output_timestamp=True,
+        return_time_stamps=True,
     )
     if not is_nano:
         generate_kwargs["batch_size_s"] = 60

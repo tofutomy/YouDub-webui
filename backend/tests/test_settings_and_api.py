@@ -40,6 +40,35 @@ def test_openai_key_is_masked(monkeypatch, tmp_path):
     assert "sk-test-secret" not in str(body)
 
 
+def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    enqueued: list[str] = []
+    monkeypatch.setattr(main.worker, "enqueue", lambda task_id: enqueued.append(task_id))
+    task_id = database.create_task(
+        "https://www.bilibili.com/video/BV1UNAbzpEzR",
+        task_id="BV1UNAbzpEzR",
+    )
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "url": "https://www.bilibili.com/video/BV1UNAbzpEzR",
+            "asr_language": "en",
+            "target_language": "zh",
+            "asr_model": "",
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] == task_id
+    assert body["asr_language"] == "en"
+    assert body["target_language"] == "zh"
+    assert database.get_task(task_id)["asr_language"] == "en"
+    assert enqueued == []
+
+
 def test_masked_openai_key_is_not_saved_back(monkeypatch, tmp_path):
     configure_tmp_runtime(monkeypatch, tmp_path)
     database.save_openai_settings("https://example.com/v1", "sk-test-secret", "test-model")
@@ -227,6 +256,94 @@ def test_delete_task_rejects_running_task(monkeypatch, tmp_path):
 
     assert response.status_code == 409
     assert database.get_task(task_id) is not None
+
+
+def test_clear_asr_stage_only_removes_declared_output(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    task_id = database.create_task("https://www.youtube.com/watch?v=clearasrxyz", task_id="clearasrxyz")
+    session = config.WORKFOLDER / "uploader" / "title__clearasrxyz"
+    for directory in ("metadata", "media", "segments/vocals", "segments/tts", "tmp"):
+        (session / directory).mkdir(parents=True, exist_ok=True)
+    for name in (
+        "metadata/asr.json",
+        "metadata/asr.raw.funasr.json",
+        "metadata/asr.raw.remote_funasr.json",
+        "metadata/asr.remote_request.json",
+        "metadata/asr_fixed.json",
+        "metadata/translation.zh.json",
+        "metadata/subtitles.zh.srt",
+        "metadata/timings.json",
+        "tmp/audio_dubbing.wav",
+        "media/video_final.mp4",
+        "segments/vocals/0001.wav",
+        "segments/tts/0001.wav",
+    ):
+        (session / name).write_bytes(b"cached")
+    database.update_task(task_id, session_path=str(session))
+
+    client = TestClient(main.app)
+    response = client.post(f"/api/tasks/{task_id}/clear-stage/asr")
+
+    assert response.status_code == 200
+    assert not (session / "metadata/asr.json").exists()
+    assert (session / "metadata/asr.raw.funasr.json").exists()
+    assert (session / "metadata/asr.raw.remote_funasr.json").exists()
+    assert (session / "metadata/asr.remote_request.json").exists()
+    assert (session / "metadata/asr_fixed.json").exists()
+    assert (session / "metadata/translation.zh.json").exists()
+    assert (session / "segments/vocals/0001.wav").exists()
+    assert (session / "segments/tts/0001.wav").exists()
+    assert (session / "media/video_final.mp4").exists()
+
+
+def test_clear_stage_outputs_match_stage_descriptions(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    task_id = database.create_task("https://www.youtube.com/watch?v=clearstages", task_id="clearstages")
+    session = config.WORKFOLDER / "uploader" / "title__clearstages"
+    for directory in ("metadata", "media", "segments/vocals", "segments/tts", "tmp"):
+        (session / directory).mkdir(parents=True, exist_ok=True)
+    for name in (
+        "media/video_source.mp4",
+        "metadata/ytdlp_info.json",
+        "metadata/local_info.json",
+        "media/audio_vocals.wav",
+        "media/audio_bgm.wav",
+        "segments/vocals/0001.wav",
+        "segments/vocals/keep.txt",
+        "segments/tts/0001.wav",
+        "segments/tts/keep.txt",
+        "tmp/audio_dubbing.wav",
+        "metadata/timings.json",
+        "media/video_final.mp4",
+    ):
+        (session / name).write_bytes(b"cached")
+    database.update_task(task_id, session_path=str(session))
+
+    client = TestClient(main.app)
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/download").status_code == 200
+    assert not (session / "media/video_source.mp4").exists()
+    assert not (session / "metadata/ytdlp_info.json").exists()
+    assert not (session / "metadata/local_info.json").exists()
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/separate").status_code == 200
+    assert not (session / "media/audio_vocals.wav").exists()
+    assert not (session / "media/audio_bgm.wav").exists()
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/split_audio").status_code == 200
+    assert not (session / "segments/vocals/0001.wav").exists()
+    assert (session / "segments/vocals/keep.txt").exists()
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/tts").status_code == 200
+    assert not (session / "segments/tts/0001.wav").exists()
+    assert (session / "segments/tts/keep.txt").exists()
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/merge_audio").status_code == 200
+    assert not (session / "tmp/audio_dubbing.wav").exists()
+    assert not (session / "metadata/timings.json").exists()
+
+    assert client.post(f"/api/tasks/{task_id}/clear-stage/merge_video").status_code == 200
+    assert not (session / "media/video_final.mp4").exists()
 
 
 def test_rerun_task_purges_session_and_requeues(monkeypatch, tmp_path):
@@ -490,6 +607,22 @@ def test_resume_task_rejects_non_failed(monkeypatch, tmp_path):
     response = client.post(f"/api/tasks/{task_id}/resume")
 
     assert response.status_code == 409
+
+
+def test_update_task_config_can_clear_asr_model(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    task_id = database.create_task(
+        "https://www.youtube.com/watch?v=asrmodelcfg",
+        task_id="asrmodelcfg",
+        asr_model="funasr:FunAudioLLM/Fun-ASR-Nano-2512",
+    )
+
+    client = TestClient(main.app)
+    response = client.patch(f"/api/tasks/{task_id}/config", json={"asr_model": None})
+
+    assert response.status_code == 200
+    assert response.json()["asr_model"] is None
+    assert database.get_task(task_id)["asr_model"] is None
 
 
 def test_ytdlp_proxy_port_settings(monkeypatch, tmp_path):

@@ -137,6 +137,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [cfgDirection, setCfgDirection] = useState<"en-zh" | "zh-en">("en-zh")
   const [cfgAddSubtitles, setCfgAddSubtitles] = useState(true)
   const [cfgTranslateMode, setCfgTranslateMode] = useState("sentence")
+  const [cfgValidateTranslation, setCfgValidateTranslation] = useState(false)
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -244,6 +245,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setCfgDirection(al === "zh" && tl === "en" ? "zh-en" : "en-zh")
       setCfgAddSubtitles(task.add_subtitles !== 0)
       setCfgTranslateMode(task.translate_mode || "sentence")
+      setCfgValidateTranslation(task.validate_translation === 1)
     }
   }
 
@@ -261,6 +263,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
         config.asr_language = parts[0]
         config.target_language = parts[1]
         config.translate_mode = cfgTranslateMode
+        config.validate_translation = cfgValidateTranslation
       } else if (configStageTarget === "merge_video") {
         config.add_subtitles = cfgAddSubtitles
       }
@@ -728,6 +731,15 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                         </SelectContent>
                       </Select>
                     </div>
+                    <label className="flex cursor-pointer items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="size-4 rounded border-gray-300"
+                        checked={cfgValidateTranslation}
+                        onChange={(e) => setCfgValidateTranslation(e.target.checked)}
+                      />
+                      {t.home.validateTranslation}
+                    </label>
                   </div>
                 ) : null}
                 {configStageTarget === "merge_video" ? (

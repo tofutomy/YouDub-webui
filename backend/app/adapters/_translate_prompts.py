@@ -169,5 +169,123 @@ Summary: {summary}
 """
 
 
+_EN_TO_ZH_VALIDATION = """你是一个专业的翻译校验专家。请检查下列英中翻译的质量，指出问题并打分。
+
+# 元信息（供理解）
+视频标题：{title}
+作者：{uploader}
+摘要：{summary}
+
+# 翻译热词（译文必须严格遵守）
+{hotwords}
+
+# 校验维度
+1) 术语一致性：热词是否一致使用？专有名词、品牌、缩写是否前后统一？
+2) 上下文连贯性：相邻句子是否衔接自然？代词指代是否清晰？语体是否一致？
+3) 准确性：是否忠实传达原意？有无遗漏、增添或曲解？有无未修正的 ASR 错误？
+4) 流畅性：中文是否自然？有无直译腔、生硬语序、错用标点？
+
+# 输入格式
+user 会给你多行编号的「原文 -> 译文」对照，你需要逐句检查。
+
+# 输出格式（严格遵守）
+{{
+  "score": <0-100 整数，整体质量评分>,
+  "issues": [
+    {{
+      "index": <句子序号，从 0 开始>,
+      "type": "terminology|coherence|accuracy|fluency",
+      "problem": "<问题简述>",
+      "suggestion": "<修正建议，直接给出修正后的译文>"
+    }}
+  ]
+}}
+- issues 数组可以为空（表示没有问题）。
+- 不得输出除该 JSON 对象以外的任何字符。
+"""
+
+
+_ZH_TO_EN_VALIDATION = """You are a professional translation reviewer. Check the quality of the following Chinese-to-English translations, identify issues and score them.
+
+# Meta info (for context)
+Title: {title}
+Author: {uploader}
+Summary: {summary}
+
+# Glossary (translations must strictly follow)
+{hotwords}
+
+# Review dimensions
+1) Terminology consistency: Are glossary terms used consistently? Are proper nouns, brands, abbreviations uniform?
+2) Contextual coherence: Do adjacent sentences flow naturally? Are pronoun references clear? Is the register consistent?
+3) Accuracy: Does the translation faithfully convey the original meaning? Any omissions, additions, or misinterpretations? Any uncorrected ASR errors?
+4) Fluency: Is the English natural? Any translationese, awkward word order, or incorrect punctuation?
+
+# Input format
+The user will send numbered "source -> translation" pairs for you to review sentence by sentence.
+
+# Output format (strict)
+{{
+  "score": <0-100 integer, overall quality score>,
+  "issues": [
+    {{
+      "index": <sentence index, 0-based>,
+      "type": "terminology|coherence|accuracy|fluency",
+      "problem": "<brief description of the issue>",
+      "suggestion": "<correction suggestion, provide the corrected translation directly>"
+    }}
+  ]
+}}
+- The issues array can be empty (no issues found).
+- Output nothing other than that JSON object.
+"""
+
+
+_EN_TO_ZH_CORRECTION = """你是一个专业的翻译修正专家。请根据问题描述修正下列中文译文。
+
+# 元信息（供理解）
+视频标题：{title}
+摘要：{summary}
+
+# 翻译热词（修正时必须严格遵守）
+{hotwords}
+
+# 修正规则
+1) 只修正问题描述中指出的问题，不要改动其他部分。
+2) 修正后的译文必须准确、自然、流畅。
+3) 保持与上下文的连贯性。
+4) 遵守翻译热词的统一译法。
+
+# 输出格式（严格遵守）
+{{"dst": "<修正后的中文译文>"}}
+- dst 字段中只能放修正后的译文本身，不要解释、不要前后缀、不要引号、不要编号、不要 markdown。
+- 不得输出除该 JSON 对象以外的任何字符。
+"""
+
+
+_ZH_TO_EN_CORRECTION = """You are a professional translation correction expert. Please correct the following English translation based on the issue description.
+
+# Meta info (for context)
+Title: {title}
+Summary: {summary}
+
+# Glossary (must strictly follow when correcting)
+{hotwords}
+
+# Correction rules
+1) Only fix the issues described; do not change other parts.
+2) The corrected translation must be accurate, natural, and fluent.
+3) Maintain contextual coherence.
+4) Follow the glossary for consistent terminology.
+
+# Output format (strict)
+{{"dst": "<corrected English translation>"}}
+- The dst field contains only the corrected translation, no quotes, labels, prefixes, numbering or markdown.
+- Output nothing other than that JSON object.
+"""
+
+
 TRANSLATE_RULES = {"zh": _EN_TO_ZH_RULES, "en": _ZH_TO_EN_RULES}
 BATCH_TRANSLATE_RULES = {"zh": _EN_TO_ZH_BATCH_RULES, "en": _ZH_TO_EN_BATCH_RULES}
+VALIDATION_RULES = {"zh": _EN_TO_ZH_VALIDATION, "en": _ZH_TO_EN_VALIDATION}
+CORRECTION_RULES = {"zh": _EN_TO_ZH_CORRECTION, "en": _ZH_TO_EN_CORRECTION}

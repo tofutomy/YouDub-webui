@@ -64,6 +64,7 @@ export default function Home() {
   const [direction, setDirection] = useState<LocalDirection>("en-zh")
   const [addSubtitles, setAddSubtitles] = useState(true)
   const [asrModel, setAsrModel] = useState("")
+  const [validateTranslation, setValidateTranslation] = useState(false)
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -106,8 +107,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-        ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined)
-        : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined)
+        ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, validateTranslation)
+        : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, validateTranslation)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -196,6 +197,15 @@ export default function Home() {
                     </SelectContent>
                   </Select>
                 </div>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 rounded border-gray-300"
+                    checked={validateTranslation}
+                    onChange={(e) => setValidateTranslation(e.target.checked)}
+                  />
+                  {t.home.validateTranslation}
+                </label>
               </div>
 
               {/* ASR */}

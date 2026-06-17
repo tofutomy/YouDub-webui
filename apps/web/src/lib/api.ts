@@ -42,6 +42,7 @@ export type Task = {
   add_subtitles: number | null
   stop_requested: number | null
   translate_mode: string | null
+  validate_translation: number | null
 }
 
 export type CookieInfo = {
@@ -155,6 +156,7 @@ export function updateTaskConfig(taskId: string, config: {
   target_language?: string
   add_subtitles?: boolean
   translate_mode?: string | null
+  validate_translation?: boolean
 }) {
   return request<Task>(`/api/tasks/${taskId}/config`, {
     method: "PATCH",
@@ -166,7 +168,7 @@ export function clearStageOutput(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/clear-stage/${stageName}`, { method: "POST" })
 }
 
-export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string) {
+export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, validateTranslation?: boolean) {
   const body: Record<string, unknown> = { url }
   if (direction) {
     const parts = direction.split("-")
@@ -179,13 +181,16 @@ export function createTask(url: string, direction?: LocalDirection, addSubtitles
   if (asrModel) {
     body.asr_model = asrModel
   }
+  if (validateTranslation) {
+    body.validate_translation = true
+  }
   return request<Task>("/api/tasks", {
     method: "POST",
     body: JSON.stringify(body),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string) {
+export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, validateTranslation?: boolean) {
   const form = new FormData()
   form.append("direction", direction)
   if (addSubtitles !== undefined) {
@@ -193,6 +198,9 @@ export async function uploadLocalTask(file: File, direction: LocalDirection, add
   }
   if (asrModel) {
     form.append("asr_model", asrModel)
+  }
+  if (validateTranslation) {
+    form.append("validate_translation", "true")
   }
   form.append("file", file)
 

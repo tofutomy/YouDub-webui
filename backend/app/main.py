@@ -40,6 +40,7 @@ class TaskCreate(BaseModel):
     add_subtitles: bool = True
     asr_model: str | None = None
     translate_mode: str | None = None
+    validate_translation: bool = False
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -196,6 +197,7 @@ def create_task(payload: TaskCreate) -> dict:
         add_subtitles=payload.add_subtitles,
         asr_model=payload.asr_model,
         translate_mode=payload.translate_mode,
+        validate_translation=payload.validate_translation,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -236,6 +238,7 @@ def upload_local_video(
     direction: str = Form("en-zh"),
     add_subtitles: bool = Form(True),
     asr_model: str = Form(""),
+    validate_translation: bool = Form(False),
     file: UploadFile = File(...),
 ) -> dict:
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
@@ -262,6 +265,7 @@ def upload_local_video(
         target_language=target_language,
         add_subtitles=add_subtitles,
         asr_model=asr_model or None,
+        validate_translation=validate_translation,
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -279,6 +283,7 @@ class TaskConfigUpdate(BaseModel):
     target_language: str | None = None
     add_subtitles: bool | None = None
     translate_mode: str | None = None
+    validate_translation: bool | None = None
 
 
 def _payload_has_field(payload: BaseModel, field: str) -> bool:
@@ -306,6 +311,8 @@ def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
         fields["add_subtitles"] = int(payload.add_subtitles)
     if _payload_has_field(payload, "translate_mode") and payload.translate_mode is not None:
         fields["translate_mode"] = payload.translate_mode or None
+    if _payload_has_field(payload, "validate_translation") and payload.validate_translation is not None:
+        fields["validate_translation"] = int(payload.validate_translation)
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)
@@ -491,6 +498,7 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
             targets.append(f)
         for f in (session / "metadata").glob("subtitles.*.srt"):
             targets.append(f)
+        targets.append(session / "metadata" / "validation.json")
     elif stage_name == "split_audio":
         vocals_dir = session / "segments" / "vocals"
         if vocals_dir.exists():

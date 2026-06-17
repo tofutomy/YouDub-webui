@@ -217,3 +217,213 @@ def test_translate_system_prompt_contains_meta_summary_hotwords(monkeypatch):
     assert "Long description" in system
     assert "Recap of the talk." in system
     assert "LEGO -> 乐高" in system
+
+
+# --- Validation and Correction tests ---
+
+def test_validate_batch_returns_score_and_issues(monkeypatch):
+    from backend.app.adapters.openai_translate import ValidationBatchResult
+
+    def fake_call_json(client, model, system, user):
+        return {
+            "score": 75,
+            "issues": [
+                {
+                    "index": 0,
+                    "type": "terminology",
+                    "problem": "GPU translated inconsistently",
+                    "suggestion": "使用 GPU 而不是图形处理器",
+                }
+            ],
+        }
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+    monkeypatch.setattr(openai_translate, "_client", lambda *a, **kw: object())
+
+    result = openai_translate.validate_batch(
+        ["The GPU is fast."],
+        ["图形处理器很快。"],
+        YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert result.score == 75
+    assert len(result.issues) == 1
+    assert result.issues[0].index == 0
+    assert result.issues[0].type == "terminology"
+
+
+def test_validate_batch_clamps_score(monkeypatch):
+    def fake_call_json(client, model, system, user):
+        return {"score": 150, "issues": []}
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+    monkeypatch.setattr(openai_translate, "_client", lambda *a, **kw: object())
+
+    result = openai_translate.validate_batch(
+        ["hello"], ["你好"], YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert result.score == 100
+
+
+def test_validate_batch_returns_default_on_failure(monkeypatch):
+    def fake_call_json(client, model, system, user):
+        raise ValueError("api error")
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+    monkeypatch.setattr(openai_translate, "_client", lambda *a, **kw: object())
+
+    result = openai_translate.validate_batch(
+        ["hello"], ["你好"], YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert result.score == 100
+    assert result.issues == []
+
+
+def test_correct_sentence_returns_corrected_text(monkeypatch):
+    def fake_call_json(client, model, system, user):
+        return {"dst": "GPU 很快。"}
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+
+    out = openai_translate.correct_sentence(
+        "The GPU is fast.", "图形处理器很快。",
+        "terminology issue", "Use GPU",
+        YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert out == "GPU 很快。"
+
+
+def test_correct_sentence_keeps_original_on_failure(monkeypatch):
+    def fake_call_json(client, model, system, user):
+        raise ValueError("api error")
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+
+    original = "图形处理器很快。"
+    out = openai_translate.correct_sentence(
+        "The GPU is fast.", original,
+        "terminology issue", "Use GPU",
+        YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert out == original
+
+
+def test_correct_sentence_replaces_em_dash_for_zh(monkeypatch):
+    def fake_call_json(client, model, system, user):
+        return {"dst": "你好——世界"}
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+
+    out = openai_translate.correct_sentence(
+        "Hello—world", "x", "issue", "fix",
+        YT_SOURCE, {}, PreprocessResponse(),
+        client=object(), model="m",
+    )
+    assert out == "你好，世界"
+
+
+def test_validate_and_correct_skips_when_score_above_threshold(monkeypatch):
+    validate_calls: list[int] = []
+
+    def fake_call_json(client, model, system, user):
+        validate_calls.append(1)
+        return {"score": 90, "issues": []}
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+    monkeypatch.setattr(openai_translate, "_client", lambda *a, **kw: object())
+
+    texts = ["Hello."]
+    dst_list = ["你好。"]
+    result, report = openai_translate.validate_and_correct(
+        texts, dst_list, YT_SOURCE, {}, PreprocessResponse(),
+        base_url="u", api_key="k", model="m", threshold=80,
+    )
+    assert result == ["你好。"]
+    assert report["overall_score"] == 90
+    assert report["corrected_count"] == 0
+
+
+def test_validate_and_correct_corrects_below_threshold(monkeypatch):
+    call_log: list[str] = []
+
+    def fake_call_json(client, model, system, user):
+        if "检查" in system or "check" in system.lower():
+            call_log.append("validate")
+            return {
+                "score": 60,
+                "issues": [
+                    {"index": 0, "type": "accuracy", "problem": "wrong", "suggestion": "你好世界。"}
+                ],
+            }
+        else:
+            call_log.append("correct")
+            return {"dst": "你好世界。"}
+
+    monkeypatch.setattr(openai_translate, "_call_json", fake_call_json)
+    monkeypatch.setattr(openai_translate, "_client", lambda *a, **kw: object())
+
+    texts = ["Hello world."]
+    dst_list = ["错误翻译。"]
+    result, report = openai_translate.validate_and_correct(
+        texts, dst_list, YT_SOURCE, {}, PreprocessResponse(),
+        base_url="u", api_key="k", model="m", threshold=80,
+    )
+    assert result == ["你好世界。"]
+    assert report["corrected_count"] == 1
+    assert "validate" in call_log
+    assert "correct" in call_log
+
+
+def test_translate_asr_with_validation_enabled(tmp_path, monkeypatch):
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+    asr_file = metadata / "asr.json"
+    _write_asr(asr_file, 1)
+
+    _stub_preprocess(monkeypatch)
+
+    call_log: list[str] = []
+
+    def fake_translate_batch(texts, source, meta, pre, **kw):
+        call_log.append("translate")
+        return ["你好。"]
+
+    def fake_validate_and_correct(texts, dst_list, source, meta, pre, **kw):
+        call_log.append("validate")
+        return dst_list, {"overall_score": 90, "batches": [], "corrected_count": 0}
+
+    monkeypatch.setattr(openai_translate, "translate_batch", fake_translate_batch)
+    monkeypatch.setattr(openai_translate, "validate_and_correct", fake_validate_and_correct)
+
+    settings = {**_settings(), "validation_enabled": "true"}
+    openai_translate.translate_asr(asr_file, tmp_path, settings, YT_SOURCE)
+
+    assert "translate" in call_log
+    assert "validate" in call_log
+    assert (metadata / "validation.json").exists()
+
+
+def test_translate_asr_without_validation(tmp_path, monkeypatch):
+    metadata = tmp_path / "metadata"
+    metadata.mkdir()
+    asr_file = metadata / "asr.json"
+    _write_asr(asr_file, 1)
+
+    _stub_preprocess(monkeypatch)
+    _stub_translate_batch(monkeypatch, lambda t: "你好")
+
+    call_log: list[str] = []
+
+    def fake_validate_and_correct(*args, **kwargs):
+        call_log.append("validate")
+        return args[1], {}
+
+    monkeypatch.setattr(openai_translate, "validate_and_correct", fake_validate_and_correct)
+
+    openai_translate.translate_asr(asr_file, tmp_path, _settings(), YT_SOURCE)
+    assert "validate" not in call_log
+    assert not (metadata / "validation.json").exists()

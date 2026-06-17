@@ -480,7 +480,7 @@ def validate_and_correct(
             for entry in cp.get("batches", []):
                 saved_batches[entry["start"]] = entry
             # Restore corrected dst_list entries
-            for entry in cp.get("corrections", []):
+            for entry in cp.get("translations", []):
                 idx = entry["idx"]
                 if 0 <= idx < len(dst_list):
                     dst_list[idx] = entry["dst"]
@@ -495,6 +495,7 @@ def validate_and_correct(
     )
 
     # Validate each batch (skip already-completed ones)
+    start_to_idx = {start: i for i, (start, _) in enumerate(chunks)}
     batch_reports: list[dict[str, Any]] = []
     all_issues: list[tuple[int, ValidationIssue]] = []  # (global_index, issue)
     total_score = 0
@@ -535,7 +536,7 @@ def validate_and_correct(
             total_score += batch_result.score
             batch_report = {
                 "start": start,
-                "batch_index": next(i for i, c in enumerate(chunks) if c[0] == start),
+                "batch_index": start_to_idx[start],
                 "sentences": list(range(start, end)),
                 "score": batch_result.score,
                 "issues": [],
@@ -551,8 +552,7 @@ def validate_and_correct(
                         "suggestion": issue.suggestion,
                     })
             # Update placeholder
-            batch_idx = next(i for i, c in enumerate(chunks) if c[0] == start)
-            batch_reports[batch_idx] = batch_report
+            batch_reports[start_to_idx[start]] = batch_report
 
             # Save checkpoint after each batch
             if checkpoint_file:
@@ -563,7 +563,7 @@ def validate_and_correct(
     # Correct issues for batches below threshold
     corrected_count = 0
     correctable = [(idx, issue) for idx, issue in all_issues
-                   if batch_reports[next(i for i, c in enumerate(chunks) if c[0] <= idx < c[1])]["score"] < threshold]
+                   if batch_reports[idx // batch_size]["score"] < threshold]
 
     # Limit corrections per sentence
     seen_indices: dict[int, int] = {}
@@ -596,18 +596,18 @@ def _save_validation_checkpoint(
     batch_reports: list[dict[str, Any]],
     dst_list: list[str],
 ) -> None:
-    """Save validation checkpoint: completed batches + corrected translations."""
-    corrections = []
+    """Save validation checkpoint: completed batches + current translations."""
+    translations = []
     for report in batch_reports:
         if report is None:
             continue
         for issue in report.get("issues", []):
             idx = issue["sentence_index"]
             if 0 <= idx < len(dst_list):
-                corrections.append({"idx": idx, "dst": dst_list[idx]})
+                translations.append({"idx": idx, "dst": dst_list[idx]})
     cp = {
         "batches": [r for r in batch_reports if r is not None],
-        "corrections": corrections,
+        "translations": translations,
     }
     checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
     log.info("validation checkpoint saved: %d batches", len(cp["batches"]))

@@ -374,23 +374,23 @@ export const STAGE_INFO: Record<string, StageInfo> = {
     output: { en: "metadata/asr_fixed.json", zh: "metadata/asr_fixed.json" },
   },
   translate: {
-    description: { en: "Translate the recognized text to the target language using OpenAI, and generate SRT subtitles.", zh: "使用 OpenAI 将识别的文本翻译为目标语言，并生成 SRT 字幕。" },
+    description: { en: "Translate the recognized text to the target language using OpenAI, optionally validate and auto-correct issues, and generate SRT subtitles.", zh: "使用 OpenAI 将识别的文本翻译为目标语言，可选校验并自动修正问题，生成 SRT 字幕。" },
     input: { en: "metadata/asr_fixed.json", zh: "metadata/asr_fixed.json" },
-    output: { en: "metadata/translation.{lang}.json\nmetadata/subtitles.{lang}.srt", zh: "metadata/translation.{lang}.json\nmetadata/subtitles.{lang}.srt" },
+    output: { en: "metadata/translation.{lang}.json\nmetadata/translation.fix.{lang}.json (validation)\nmetadata/validation.json\nmetadata/subtitles.{lang}.srt", zh: "metadata/translation.{lang}.json\nmetadata/translation.fix.{lang}.json（校验修正）\nmetadata/validation.json\nmetadata/subtitles.{lang}.srt" },
   },
   split_audio: {
     description: { en: "Split the vocals into per-segment reference clips for TTS.", zh: "将人声按句子切分为 TTS 参考音频片段。" },
-    input: { en: "media/audio_vocals.wav\nmetadata/translation.{lang}.json", zh: "media/audio_vocals.wav\nmetadata/translation.{lang}.json" },
+    input: { en: "media/audio_vocals.wav\nmetadata/translation.{lang}.json  (prefers translation.fix if exists)", zh: "media/audio_vocals.wav\nmetadata/translation.{lang}.json（存在 fix 文件时优先使用）" },
     output: { en: "segments/vocals/0001.wav\nsegments/vocals/0002.wav\n...", zh: "segments/vocals/0001.wav\nsegments/vocals/0002.wav\n..." },
   },
   tts: {
     description: { en: "Use VoxCPM2 to generate dubbed audio for each translated sentence.", zh: "使用 VoxCPM2 为每句翻译生成配音音频。" },
-    input: { en: "metadata/translation.{lang}.json\nsegments/vocals/*.wav", zh: "metadata/translation.{lang}.json\nsegments/vocals/*.wav" },
+    input: { en: "metadata/translation.{lang}.json  (prefers translation.fix if exists)\nsegments/vocals/*.wav", zh: "metadata/translation.{lang}.json（存在 fix 文件时优先使用）\nsegments/vocals/*.wav" },
     output: { en: "segments/tts/0001.wav\nsegments/tts/0002.wav\n...", zh: "segments/tts/0001.wav\nsegments/tts/0002.wav\n..." },
   },
   merge_audio: {
     description: { en: "Concatenate TTS clips, adjust speed to match original timing, and produce the final dubbing track.", zh: "拼接 TTS 片段，调整语速对齐原始时间轴，生成最终配音音轨。" },
-    input: { en: "metadata/translation.{lang}.json\nsegments/tts/*.wav", zh: "metadata/translation.{lang}.json\nsegments/tts/*.wav" },
+    input: { en: "metadata/translation.{lang}.json  (prefers translation.fix if exists)\nsegments/tts/*.wav", zh: "metadata/translation.{lang}.json（存在 fix 文件时优先使用）\nsegments/tts/*.wav" },
     output: { en: "tmp/audio_dubbing.wav\nmetadata/timings.json", zh: "tmp/audio_dubbing.wav\nmetadata/timings.json" },
   },
   merge_video: {

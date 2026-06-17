@@ -66,6 +66,7 @@ class ValidationBatchResult(BaseModel):
 DEFAULT_VALIDATION_THRESHOLD = 99  # 校正阈值，评分高于该值的批次将不会进行校正
 DEFAULT_MAX_CORRECTIONS = 2
 VALIDATION_CONCURRENCY = 10
+DEFAULT_VALIDATION_BATCH_SIZE = 25  # 校验用更大窗口，与翻译(15)错开，提供不同上下文视角
 
 
 def list_models(*, base_url: str, api_key: str) -> list[str]:
@@ -463,15 +464,13 @@ def validate_and_correct(
 
     client = _client(base_url, api_key)
 
-    # Split into validation batches (same size as translation batches)
-    batch_size = DEFAULT_BATCH_SIZE
-    half = max(1, batch_size // 2)
+    # Validation uses a larger, non-overlapping batch to provide a different
+    # contextual view than translation (which uses batch_size=15 with overlap).
+    validation_batch_size = DEFAULT_VALIDATION_BATCH_SIZE
     chunks: list[tuple[int, int]] = []  # (start, end)
-    for start in range(0, len(texts), half):
-        end = min(start + batch_size, len(texts))
+    for start in range(0, len(texts), validation_batch_size):
+        end = min(start + validation_batch_size, len(texts))
         chunks.append((start, end))
-        if end >= len(texts):
-            break
 
     # Load checkpoint if available
     saved_batches: dict[int, dict[str, Any]] = {}  # batch_start -> batch_report
@@ -536,7 +535,7 @@ def validate_and_correct(
                 if progress_callback is not None:
                     pct = 50 + round(_validated_so_far / max(1, len(chunks)) * 45)
                     progress_callback(pct, f"校验 {_validated_so_far}/{len(chunks)} 批")
-                end = min(start + batch_size, len(texts))
+                end = min(start + validation_batch_size, len(texts))
                 total_score += batch_result.score
                 batch_report = {
                     "start": start,
@@ -568,8 +567,12 @@ def validate_and_correct(
     corrected_count = 0
     if progress_callback is not None:
         progress_callback(95, f"校验完成，score={overall_score}，修正中…")
-    correctable = [(idx, issue) for idx, issue in all_issues
-                   if batch_reports[idx // batch_size]["score"] < threshold]
+    correctable = [
+        (idx, issue)
+        for idx, issue in all_issues
+        if any(br is not None and idx in br.get("sentences", []) and br["score"] < threshold
+               for br in batch_reports)
+    ]
 
     # Limit corrections per sentence
     seen_indices: dict[int, int] = {}

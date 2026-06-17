@@ -64,6 +64,7 @@ export default function Home() {
   const [direction, setDirection] = useState<LocalDirection>("en-zh")
   const [addSubtitles, setAddSubtitles] = useState(true)
   const [asrModel, setAsrModel] = useState("")
+  const [translateMode, setTranslateMode] = useState("sentence")
   const [validateTranslation, setValidateTranslation] = useState(false)
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
@@ -107,8 +108,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-        ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, validateTranslation)
-        : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, validateTranslation)
+      ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation)
+      : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -197,7 +198,22 @@ export default function Home() {
                     </SelectContent>
                   </Select>
                 </div>
-                <label className="flex cursor-pointer items-center gap-2 text-sm">
+<div className="space-y-2">
+    <Label htmlFor="translate-mode">{t.home.translateModeLabel}</Label>
+    <Select
+      value={translateMode}
+      onValueChange={(value) => setTranslateMode(value)}
+    >
+      <SelectTrigger id="translate-mode" className="h-10">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value="sentence">{t.home.translateModeSentence}</SelectItem>
+        <SelectItem value="batch">{t.home.translateModeBatch}</SelectItem>
+      </SelectContent>
+    </Select>
+  </div>
+  <label className="flex cursor-pointer items-center gap-2 text-sm">
                   <input
                     type="checkbox"
                     className="size-4 rounded border-gray-300"

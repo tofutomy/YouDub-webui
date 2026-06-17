@@ -238,6 +238,7 @@ def upload_local_video(
     direction: str = Form("en-zh"),
     add_subtitles: bool = Form(True),
     asr_model: str = Form(""),
+    translate_mode: str = Form(""),
     validate_translation: bool = Form(False),
     file: UploadFile = File(...),
 ) -> dict:
@@ -265,6 +266,7 @@ def upload_local_video(
         target_language=target_language,
         add_subtitles=add_subtitles,
         asr_model=asr_model or None,
+        translate_mode=translate_mode or None,
         validate_translation=validate_translation,
     )
     database.update_task(task_id, title=Path(original_name).stem)

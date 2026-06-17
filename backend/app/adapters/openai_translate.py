@@ -450,6 +450,7 @@ def validate_and_correct(
     threshold: int = DEFAULT_VALIDATION_THRESHOLD,
     max_corrections: int = DEFAULT_MAX_CORRECTIONS,
     checkpoint_file: Path | None = None,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
     """Validate translations in batches, then correct issues.
 
@@ -528,40 +529,45 @@ def validate_and_correct(
                 source, meta, pre, client=client, model=model,
             )
 
+        _validated_so_far = len(saved_batches)
         with ThreadPoolExecutor(max_workers=max(1, VALIDATION_CONCURRENCY)) as pool:
-            results = list(pool.map(_validate_chunk, pending_chunks))
+            for start, batch_result in pool.map(_validate_chunk, pending_chunks):
+                _validated_so_far += 1
+                if progress_callback is not None:
+                    pct = 50 + round(_validated_so_far / max(1, len(chunks)) * 45)
+                    progress_callback(pct, f"校验 {_validated_so_far}/{len(chunks)} 批")
+                end = min(start + batch_size, len(texts))
+                total_score += batch_result.score
+                batch_report = {
+                    "start": start,
+                    "batch_index": start_to_idx[start],
+                    "sentences": list(range(start, end)),
+                    "score": batch_result.score,
+                    "issues": [],
+                }
+                for issue in batch_result.issues:
+                    global_idx = start + issue.index
+                    if 0 <= global_idx < len(dst_list):
+                        all_issues.append((global_idx, issue))
+                        batch_report["issues"].append({
+                            "sentence_index": global_idx,
+                            "type": issue.type,
+                            "problem": issue.problem,
+                            "suggestion": issue.suggestion,
+                        })
+                # Update placeholder
+                batch_reports[start_to_idx[start]] = batch_report
 
-        for start, batch_result in results:
-            end = min(start + batch_size, len(texts))
-            total_score += batch_result.score
-            batch_report = {
-                "start": start,
-                "batch_index": start_to_idx[start],
-                "sentences": list(range(start, end)),
-                "score": batch_result.score,
-                "issues": [],
-            }
-            for issue in batch_result.issues:
-                global_idx = start + issue.index
-                if 0 <= global_idx < len(dst_list):
-                    all_issues.append((global_idx, issue))
-                    batch_report["issues"].append({
-                        "sentence_index": global_idx,
-                        "type": issue.type,
-                        "problem": issue.problem,
-                        "suggestion": issue.suggestion,
-                    })
-            # Update placeholder
-            batch_reports[start_to_idx[start]] = batch_report
-
-            # Save checkpoint after each batch
-            if checkpoint_file:
-                _save_validation_checkpoint(checkpoint_file, batch_reports, dst_list)
+                # Save checkpoint after each batch
+                if checkpoint_file:
+                    _save_validation_checkpoint(checkpoint_file, batch_reports, dst_list)
 
     overall_score = total_score // max(1, len(chunks))
 
     # Correct issues for batches below threshold
     corrected_count = 0
+    if progress_callback is not None:
+        progress_callback(95, f"校验完成，score={overall_score}，修正中…")
     correctable = [(idx, issue) for idx, issue in all_issues
                    if batch_reports[idx // batch_size]["score"] < threshold]
 
@@ -582,6 +588,9 @@ def validate_and_correct(
         if corrected != original:
             dst_list[idx] = corrected
             corrected_count += 1
+
+    if progress_callback is not None:
+        progress_callback(100, f"校验修正完成 (score={overall_score}, corrected={corrected_count})")
 
     validation_report = {
         "overall_score": overall_score,
@@ -661,6 +670,7 @@ def translate_asr(
     session: Path,
     settings: dict[str, str],
     source: SourceConfig,
+    progress_callback: Callable[[int, str], None] | None = None,
 ) -> Path:
     output_file = session / "metadata" / f"translation.{source.target_language}.json"
     fix_file = session / "metadata" / f"translation.fix.{source.target_language}.json"
@@ -701,6 +711,18 @@ def translate_asr(
         mode = "sentence"
     concurrency = _concurrency_from(settings)
 
+    validation_enabled = (settings.get("validation_enabled") or "").strip().lower() in ("1", "true", "on")
+    # Validation is optional and time-consuming; cap translation progress at 50% when enabled.
+    _translate_cap = 50 if validation_enabled else 100
+    _total = len(texts)
+
+    def _report_translate(completed_count: int, first_sentence: str = "") -> None:
+        if progress_callback is None or _total == 0:
+            return
+        pct = round(completed_count / _total * _translate_cap)
+        preview = (first_sentence[:30] + "…") if len(first_sentence) > 30 else first_sentence
+        progress_callback(pct, f"已翻译 {completed_count}/{_total} 句 | {preview}")
+
     # --- Phase 1: Translate (skip if output already exists) ---
     if not output_file.exists():
         dst_list: list[str] = [""] * len(texts)
@@ -726,6 +748,8 @@ def translate_asr(
         def _on_progress(idx: int, result: str) -> None:
             dst_list[idx] = result
             completed.add(idx)
+            _first = next((s for s in dst_list if s), "")
+            _report_translate(len(completed), _first)
 
         try:
             if mode == "batch":
@@ -751,9 +775,9 @@ def translate_asr(
     else:
         log.info("translation file exists, skipping: %s", output_file.name)
         dst_list = [item["dst"] for item in json.loads(output_file.read_text(encoding="utf-8"))["translation"]]
+        _report_translate(_total)
 
     # --- Phase 2: Validate and correct (resumable, optional) ---
-    validation_enabled = (settings.get("validation_enabled") or "").strip().lower() in ("1", "true", "on")
     if validation_enabled:
         if fix_file.exists():
             log.info("validation fix file already exists, skipping: %s", fix_file.name)
@@ -769,12 +793,18 @@ def translate_asr(
                 max_corrections = max(0, int(raw_max))
 
             log.info("validation enabled: threshold=%d, max_corrections=%d", threshold, max_corrections)
+
+            def _report_validation(pct_50_100: int, msg: str) -> None:
+                if progress_callback is not None:
+                    progress_callback(pct_50_100, msg)
+
             dst_list, validation_report = validate_and_correct(
                 texts, dst_list, source, meta, pre,
                 **api,
                 threshold=threshold,
                 max_corrections=max_corrections,
                 checkpoint_file=validation_checkpoint,
+                progress_callback=_report_validation,
             )
             # Save validation report
             val_file = session / "metadata" / "validation.json"
@@ -796,6 +826,8 @@ def translate_asr(
             validation_checkpoint.unlink(missing_ok=True)
 
     _generate_srt_if_needed(session, source.target_language)
+    if progress_callback is not None:
+        progress_callback(100, "翻译完成")
     return get_translation_file(session, source.target_language)
 
 

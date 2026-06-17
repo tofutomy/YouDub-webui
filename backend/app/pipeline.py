@@ -383,7 +383,10 @@ class PipelineRunner:
             "translate",
             f"Using model {settings['model']} at {settings['base_url']} ({source.asr_language}->{source.target_language}) [mode={settings['translate_mode']}{validation_tag}])",
         )
-        self.artifacts.translation_file = translate_asr(asr_file, session, settings, source)
+        self.artifacts.translation_file = translate_asr(
+            asr_file, session, settings, source,
+            progress_callback=lambda p, m: self.stage_progress("translate", p, m),
+        )
         items = _json.loads(self.artifacts.translation_file.read_text(encoding="utf-8"))["translation"]
         self.stage_message(
             "translate",

@@ -3,9 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI
 from pydantic import BaseModel, Field, ValidationError
@@ -179,8 +179,16 @@ def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: Preproces
     )
 
 
-def _post_process(text: str, target_language: str) -> str:
+_LEADING_NUM_RE = re.compile(r"^\d{1,3}\s*[.、．]\s*")
+
+
+def _post_process(text: str, target_language: str, src: str = "") -> str:
     cleaned = text.strip()
+    # Strip model-injected sentence numbers (e.g. "9. 众所周知" -> "众所周知")
+    # Only when the source text does NOT start with a digit, to avoid
+    # stripping legitimate numbers like "3.14" or "100人".
+    if src and cleaned and not src[0:1].isdigit():
+        cleaned = _LEADING_NUM_RE.sub("", cleaned)
     if target_language == "zh":
         cleaned = cleaned.replace("——", "，")
     return cleaned
@@ -200,7 +208,7 @@ def translate_sentence(
             item = TranslationItem.model_validate(data)
             if not item.dst.strip():
                 raise ValueError("empty dst")
-            return _post_process(item.dst, target_language)
+            return _post_process(item.dst, target_language, src=text)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             last_error = exc
             log.warning("translate attempt %d failed for %r: %s", attempt + 1, text[:60], exc)
@@ -217,6 +225,7 @@ def translate_batch(
     api_key: str,
     model: str,
     concurrency: int = DEFAULT_CONCURRENCY,
+    on_progress: Callable[[int, str], None] | None = None,
 ) -> list[str]:
     if not texts:
         return []
@@ -225,11 +234,18 @@ def translate_batch(
     log.info(
         "translate_batch: %d sentences, concurrency=%d", len(texts), concurrency,
     )
+    results: list[str] = [""] * len(texts)
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        return list(pool.map(
-            lambda t: translate_sentence(t, source.target_language, client, model, system),
-            texts,
-        ))
+        future_to_idx = {
+            pool.submit(translate_sentence, t, source.target_language, client, model, system): i
+            for i, t in enumerate(texts)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            results[idx] = future.result()
+            if on_progress:
+                on_progress(idx, results[idx])
+    return results
 
 
 def _translate_batch_context_chunk(
@@ -246,7 +262,7 @@ def _translate_batch_context_chunk(
         data = _call_json(client, model, system, user)
         translations = data.get("translations")
         if isinstance(translations, list) and len(translations) == expected_count:
-            return [_post_process(str(t), target_language) for t in translations]
+            return [_post_process(str(t), target_language, src=c) for t, c in zip(translations, chunk)]
         actual = len(translations) if isinstance(translations, list) else type(translations)
         last_error = ValueError(f"expected {expected_count}, got {actual}")
         log.warning("batch chunk attempt %d: %s", attempt + 1, last_error)
@@ -266,6 +282,7 @@ def _translate_batch_context_chunk(
         _post_process(
             translate_sentence(t, target_language, client, model, system_single),
             target_language,
+            src=t,
         )
         for t in chunk
     ]
@@ -282,6 +299,7 @@ def translate_batch_context(
     model: str,
     concurrency: int = DEFAULT_CONCURRENCY,
     batch_size: int = DEFAULT_BATCH_SIZE,
+    on_progress: Callable[[int, str], None] | None = None,
 ) -> list[str]:
     if not texts:
         return []
@@ -315,16 +333,17 @@ def translate_batch_context(
         )
         return (idx, result)
 
-    results: list[tuple[int, list[str]]] = []
-    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
-        results = list(pool.map(_do_chunk, chunks))
-
     merged: list[str | None] = [None] * len(texts)
-    for offset, chunk_translations in results:
-        for i, t in enumerate(chunk_translations):
-            pos = offset + i
-            if pos < len(merged) and merged[pos] is None:
-                merged[pos] = t
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+        futures = {pool.submit(_do_chunk, c): c[0] for c in chunks}
+        for future in as_completed(futures):
+            offset, chunk_translations = future.result()
+            for i, t in enumerate(chunk_translations):
+                pos = offset + i
+                if pos < len(merged) and merged[pos] is None:
+                    merged[pos] = t
+                    if on_progress:
+                        on_progress(pos, t)
     return [t or "" for t in merged]
 
 
@@ -410,7 +429,7 @@ def correct_sentence(
             item = TranslationItem.model_validate(data)
             if not item.dst.strip():
                 raise ValueError("empty dst")
-            return _post_process(item.dst, source.target_language)
+            return _post_process(item.dst, source.target_language, src=src_text)
         except (json.JSONDecodeError, ValidationError, ValueError) as exc:
             last_error = exc
             log.warning("correct_sentence attempt %d failed for %r: %s", attempt + 1, src_text[:60], exc)
@@ -565,6 +584,8 @@ def translate_asr(
         _generate_srt_if_needed(output_file, session, source.target_language)
         return output_file
 
+    checkpoint_file = session / "metadata" / f"translation.{source.target_language}.checkpoint.json"
+
     data = json.loads(asr_file.read_text(encoding="utf-8"))
     utterances = data["result"]["utterances"]
     texts = [u["text"].strip() for u in utterances]
@@ -572,31 +593,77 @@ def translate_asr(
     meta = _read_meta(session)
 
     api = {key: settings[key] for key in API_SETTING_KEYS if key in settings}
-    pre = preprocess(full_text, meta, source, **api)
-
-    # Save preprocess output for debugging / analysis
     pre_file = session / "metadata" / "preprocess.json"
-    pre_file.write_text(
-        json.dumps(pre.model_dump(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    log.info("preprocess saved to %s", pre_file.name)
+
+    # Load cached preprocess output if available
+    if pre_file.exists():
+        try:
+            pre = PreprocessResponse.model_validate_json(pre_file.read_text(encoding="utf-8"))
+            log.info("preprocess loaded from cache: %s", pre_file.name)
+        except Exception as exc:
+            log.warning("failed to load preprocess cache, re-running: %s", exc)
+            pre = preprocess(full_text, meta, source, **api)
+            pre_file.write_text(
+                json.dumps(pre.model_dump(), ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+    else:
+        pre = preprocess(full_text, meta, source, **api)
+        pre_file.write_text(
+            json.dumps(pre.model_dump(), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        log.info("preprocess saved to %s", pre_file.name)
 
     mode = (settings.get("translate_mode") or "sentence").strip().lower()
     if mode not in VALID_MODES:
         mode = "sentence"
     concurrency = _concurrency_from(settings)
 
-    if mode == "batch":
-        log.info("translate mode=batch")
-        dst_list = translate_batch_context(
-            texts, source, meta, pre, **api, concurrency=concurrency,
-        )
-    else:
-        log.info("translate mode=sentence")
-        dst_list = translate_batch(
-            texts, source, meta, pre, **api, concurrency=concurrency,
-        )
+    # --- Checkpoint: load existing progress ---
+    dst_list: list[str] = [""] * len(texts)
+    completed: set[int] = set()
+    if checkpoint_file.exists():
+        try:
+            cp = json.loads(checkpoint_file.read_text(encoding="utf-8"))
+            for k, v in cp.items():
+                idx = int(k)
+                if 0 <= idx < len(dst_list) and v:
+                    dst_list[idx] = v
+                    completed.add(idx)
+            if completed:
+                log.info("checkpoint loaded: %d/%d sentences already translated", len(completed), len(texts))
+        except Exception as exc:
+            log.warning("failed to load checkpoint, starting fresh: %s", exc)
+
+    def _save_checkpoint() -> None:
+        cp = {str(i): dst_list[i] for i in completed if dst_list[i]}
+        checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+        log.info("checkpoint saved: %d/%d sentences", len(completed), len(texts))
+
+    def _on_progress(idx: int, result: str) -> None:
+        dst_list[idx] = result
+        completed.add(idx)
+
+    try:
+        if mode == "batch":
+            log.info("translate mode=batch")
+            translate_batch_context(
+                texts, source, meta, pre, **api, concurrency=concurrency,
+                on_progress=_on_progress,
+            )
+        else:
+            log.info("translate mode=sentence")
+            translate_batch(
+                texts, source, meta, pre, **api, concurrency=concurrency,
+                on_progress=_on_progress,
+            )
+    except Exception:
+        _save_checkpoint()
+        raise
+
+    # All done — delete checkpoint
+    checkpoint_file.unlink(missing_ok=True)
 
     # Optional: validate and correct translations
     validation_enabled = (settings.get("validation_enabled") or "").strip().lower() in ("1", "true", "on")

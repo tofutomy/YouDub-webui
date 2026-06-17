@@ -45,7 +45,12 @@ def _stub_translate_batch(monkeypatch, transform):
 
     def fake(texts, source, meta, pre, **kw):
         seen.append({"texts": list(texts), "source": source, "meta": meta, "pre": pre, **kw})
-        return [transform(t) for t in texts]
+        results = [transform(t) for t in texts]
+        on_progress = kw.get("on_progress")
+        if on_progress:
+            for i, r in enumerate(results):
+                on_progress(i, r)
+        return results
 
     monkeypatch.setattr(openai_translate, "translate_batch", fake)
     return seen

@@ -496,6 +496,8 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
     elif stage_name == "translate":
         for f in (session / "metadata").glob("translation.*.json"):
             targets.append(f)
+        for f in (session / "metadata").glob("translation.*.checkpoint.json"):
+            targets.append(f)
         for f in (session / "metadata").glob("subtitles.*.srt"):
             targets.append(f)
         targets.append(session / "metadata" / "validation.json")

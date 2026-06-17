@@ -501,6 +501,9 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
         for f in (session / "metadata").glob("subtitles.*.srt"):
             targets.append(f)
         targets.append(session / "metadata" / "validation.json")
+        for f in (session / "metadata").glob("validation.*.checkpoint.json"):
+            targets.append(f)
+        targets.append(session / "metadata" / "validation.checkpoint.json")
     elif stage_name == "split_audio":
         vocals_dir = session / "segments" / "vocals"
         if vocals_dir.exists():

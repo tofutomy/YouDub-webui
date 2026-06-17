@@ -257,11 +257,9 @@ class PipelineRunner:
             self.artifacts.asr_fixed_file = _require_existing(session / "metadata" / "asr_fixed.json", "asr_fixed_file")
             return
         if stage == "translate":
+            from .adapters.openai_translate import get_translation_file
             source = get_source_for_task(task)
-            self.artifacts.translation_file = _require_existing(
-                session / "metadata" / f"translation.{source.target_language}.json",
-                "translation_file",
-            )
+            self.artifacts.translation_file = get_translation_file(session, source.target_language)
             return
         if stage == "split_audio":
             self.artifacts.vocals_dir = _require_existing(session / "segments" / "vocals", "vocals_dir")

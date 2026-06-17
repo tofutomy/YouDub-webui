@@ -10,9 +10,9 @@
 
 An open-source video localization tool proven in a real creator workflow.
 
-YouDub WebUI turns a single YouTube or Bilibili video into a dubbed video in the target language. It downloads the source video, separates vocals from background audio, transcribes speech, translates the transcript, generates new voiceover, mixes audio, burns subtitles, and produces a final video that can be played or downloaded from the web UI.
+YouDub WebUI turns a single YouTube video, Bilibili video, or local video file into a dubbed video in the target language. It downloads or reads the source video, separates vocals from background audio, transcribes speech, translates the transcript, generates new voiceover, mixes audio, burns subtitles, and produces a final video that can be played or downloaded from the web UI.
 
-The most mature path is **YouTube English -> Chinese dubbing**. The app also supports **Bilibili Chinese -> English dubbing** through the same task pipeline.
+The most mature path is **YouTube English -> Chinese dubbing**. The app also supports **Bilibili Chinese -> English dubbing** and **local uploads** through the same task pipeline.
 
 中文 README: [README.md](README.md)
 
@@ -113,6 +113,8 @@ sudo apt install -y ffmpeg nodejs npm
 brew install ffmpeg node
 ```
 
+> **FFmpeg Shared DLL note**: `torchaudio 2.11+` uses the `torchcodec` backend, which requires FFmpeg shared DLLs. If your system install is the `essentials_build` (static) variant, download the `full_build-shared` `bin/*.dll` files and copy them into `.venv\Lib\site-packages\torchcodec\`.
+
 If your system package manager does not provide Python 3.12, install it from python.org, pyenv, conda/mamba, or your distro's recommended channel. The important part is to create the virtual environment with Python 3.12.
 
 ### 2. Clone
@@ -126,6 +128,8 @@ git submodule update --init --recursive
 ```
 
 Demucs is included as a source submodule, so do not skip `git submodule update`.
+
+> **Dependency boundary note**: The Windows main `.venv` runs the backend, Whisper, SenseVoiceSmall, VoxCPM, Demucs, and other local capabilities. **Do not install vLLM in this environment**. For LLM-based FunASR models such as Fun-ASR-Nano, use a WSL2/Linux remote vLLM service or a separate environment.
 
 ### 3. Install dependencies
 
@@ -208,7 +212,7 @@ Common environment variables:
 | Variable | Purpose |
 | --- | --- |
 | `WORKFOLDER` | Per-task media, audio segments, and intermediate artifacts. |
-| `MODEL_CACHE_DIR` | ModelScope cache directory, used by VoxCPM2 by default. |
+| `MODEL_CACHE_DIR` | Model cache directory, used by VoxCPM2, Qwen3-ASR, and others. |
 | `DEVICE` | Model runtime device, for example `auto`, `cuda`, `cuda:0`, `mps`, `mps:0`, or `cpu`; `auto` selects CUDA, then MPS, then CPU. |
 | `DEMUCS_DEVICE` / `WHISPER_DEVICE` | Optional component-level device overrides. Empty values use `DEVICE`. Whisper falls back to CPU when MPS is selected because word timestamp alignment depends on float64 DTW, which MPS does not support. |
 | `OPENAI_BASE_URL` | OpenAI-compatible API endpoint, for example `https://api.openai.com/v1`. |
@@ -220,7 +224,13 @@ Common environment variables:
 | `NO_PROXY` | Comma-separated proxy bypass list. Include `localhost,127.0.0.1,::1` when using a local OpenAI-compatible service so local requests stay direct. |
 | `VOXCPM_MODEL` / `VOXCPM_MODEL_DIR` | VoxCPM2 ModelScope model ID or local model directory. VoxCPM currently selects CUDA/MPS/CPU inside the upstream package, and task logs report it as `voxcpm=library-auto`. |
 | `VOXCPM_LOAD_DENOISER` / `VOXCPM_CFG_VALUE` / `VOXCPM_INFERENCE_TIMESTEPS` / `VOXCPM_MIN_REFERENCE_MS` | VoxCPM2 inference controls. |
+| `LOCAL_UPLOAD_MAX_BYTES` | Maximum local upload size in bytes. Default: `4294967296` (4 GB). |
+| `FUNASR_MODEL` / `FUNASR_VAD_MODEL` | Default FunASR model and VAD model. |
+| `FUNASR_USE_VLLM` | Local vLLM engine switch: `auto`/`on`/`off`. Default: `auto`. |
+| `FUNASR_REMOTE_*` | Remote vLLM service settings, including `BASE_URL`, `ENDPOINT`, `PATH_MODE`, `TIMEOUT`, `AUTOSTART`, `AUTOSTOP`, and more. |
 | `CORS_ALLOW_ORIGINS` / `CORS_ALLOW_ORIGIN_REGEX` | Additional frontend origins. |
+
+For default values and full descriptions, see `env.txt.example`.
 
 Common localhost, LAN, and Tailscale `:3000` frontend origins are allowed by default. If you open the frontend through a custom hostname, add the full origin to `CORS_ALLOW_ORIGINS`, for example `http://youdub.example.com:3000`.
 
@@ -268,16 +278,43 @@ http://localhost:3000
 
 When opening the app from LAN, WSL2, or another machine, use the actual frontend host IP or hostname, for example `http://192.168.1.20:3000`. The backend listens on `0.0.0.0:8000`, and the frontend listens on `0.0.0.0:3000`.
 
+> **Upload limit**: The Next.js proxy request body limit is set to `2000mb`. To allow larger uploads, adjust both `proxyClientMaxBodySize` in `next.config.ts` and `LOCAL_UPLOAD_MAX_BYTES`.
+
 ## Using the Web UI
 
+### Initial configuration
+
 1. Open Settings in the top-right corner.
-2. Paste Netscape-format YouTube cookies.
+2. Paste Netscape-format YouTube cookies (recommended when processing YouTube videos).
 3. Set the yt-dlp proxy port, such as `7890` or `20171`.
 4. Enter the OpenAI base URL and API key.
 5. Click `Get models` to fetch model IDs, or enter a model manually.
 6. Tune `Translate concurrency` based on your API provider's rate limits.
-7. Return to the home page and submit a YouTube URL or Bilibili URL.
-8. Open the task detail page to watch stage progress, logs, and the final video.
+
+### Creating a task
+
+The home page supports two entry points:
+
+- **URL task**: Paste a YouTube or Bilibili link, choose the translation direction (for example `en -> zh` or `zh -> en`), and optionally select the ASR model and whether to burn subtitles.
+- **Local upload**: Drag or select a local video file (supported: `.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`), choose the translation direction, and upload. After upload, the file is automatically transcoded to h.264 + aac MP4.
+
+Options available when creating a task:
+
+- **ASR model**: Whisper large-v3-turbo / Whisper large-v3 / SenseVoiceSmall / Fun-ASR-Nano / Qwen3-ASR.
+- **Translation mode**: `sentence` (per-sentence, fast) or `batch` (context-aware, slower).
+- **Validate translation**: Enable quality checking and automatic correction of translation issues.
+- **Subtitles**: Whether to burn translated subtitles into the final video.
+
+### Task management
+
+On the task detail page you can:
+
+- View stage progress, logs, and the final video.
+- **Stop task**: Stop a running task at the next safe checkpoint. Succeeded stages are kept, and you can resume later.
+- **Resume task**: Resume a failed or stopped task.
+- **Rerun / rerun-stage**: Rerun the whole task, or rerun from a selected stage and all downstream stages.
+- **Clear stage output**: Delete a stage's output files and reset it to pending.
+- **Update config**: When the task is not running, change the ASR model, translation direction, translation mode, validation toggle, and subtitle option.
 
 API keys and cookies are masked in the UI. The backend does not return plaintext cookie content to the frontend.
 
@@ -295,12 +332,12 @@ Only process videos you have the right to download, transform, and publish.
 ## Pipeline
 
 ```text
-YouTube / Bilibili URL
-  -> yt-dlp downloads one video
+YouTube / Bilibili URL or local video
+  -> Download or read the video and transcode to a uniform format
   -> Demucs separates vocals and background audio
-  -> Whisper transcribes speech with word timestamps
+  -> ASR (Whisper / SenseVoiceSmall / Fun-ASR-Nano / Qwen3-ASR) transcribes speech with word timestamps
   -> Sentence and timing normalization
-  -> OpenAI-compatible API preprocesses the full transcript and translates sentences in parallel
+  -> OpenAI-compatible API preprocesses the full transcript and translates (sentence / batch mode, optional validation and correction)
   -> Original vocals are split into per-sentence reference clips
   -> VoxCPM2 generates target-language voiceover
   -> Voiceover timing is aligned and mixed with background audio
@@ -309,14 +346,16 @@ YouTube / Bilibili URL
 
 ## Highlights
 
-- **Real end-to-end workflow**: URL in, final video out. No manual audio slicing, subtitle editing, or video rendering steps.
-- **Two source paths**: YouTube English -> Chinese is the primary mature workflow; Bilibili Chinese -> English is wired into the same task pipeline.
+- **Real end-to-end workflow**: URL or local file in, final video out. No manual audio slicing, subtitle editing, or video rendering steps.
+- **Multiple source paths**: Supports YouTube, Bilibili, and local uploads. YouTube English -> Chinese is the primary mature workflow; Bilibili Chinese -> English is wired into the same task pipeline.
+- **Multiple ASR backends**: Choose Whisper large-v3-turbo / large-v3, SenseVoiceSmall, Fun-ASR-Nano (local/remote vLLM), or Qwen3-ASR (local transformers).
+- **Flexible translation**: `sentence` mode for fast per-sentence translation, or `batch` mode for context-aware chunk translation. Optional translation validation automatically checks and corrects issues.
+- **Resumable checkpoints**: The translation stage saves checkpoints automatically and can resume after failure. Translation validation also supports incremental checkpoints.
+- **Task control**: Stop running tasks, resume failed/stopped tasks, rerun the whole task, rerun from a selected stage downstream, and clear stage outputs.
 - **Local-first storage**: SQLite state, cookies, logs, intermediate artifacts, and final videos stay on your machine.
 - **Observable task progress**: Task history, stage status, stage duration, logs, and errors are visible in the web UI.
-- **Resume after failure**: Failed tasks can resume from the failed stage, reusing cached outputs from stages that already succeeded.
-- **Rerun and clean up**: Rerun a task from scratch, or delete its database row, log file, and session directory under `workfolder/`.
 - **Inspect the result**: Successful tasks expose an inline video player and an mp4 download link.
-- **Settings in the UI**: YouTube cookies, yt-dlp proxy port, OpenAI base URL, API key, model name, and translation concurrency can be maintained from Settings.
+- **Settings in the UI**: YouTube cookies, yt-dlp proxy port, OpenAI base URL, API key, model name, translation concurrency, ASR model, translation mode, and subtitle toggle can be maintained from Settings.
 - **Hackable architecture**: The pipeline is serial and module boundaries are clear, making it practical to replace ASR, translation, TTS, or subtitle rendering.
 
 ## Tech Stack
@@ -325,7 +364,7 @@ YouTube / Bilibili URL
 - Backend: FastAPI, SQLite, in-process background worker
 - Download: yt-dlp
 - Source separation: Demucs source submodule
-- ASR: openai-whisper, defaulting to `large-v3-turbo`
+- ASR: openai-whisper (default `large-v3-turbo`), FunASR (SenseVoiceSmall / Fun-ASR-Nano), Qwen3-ASR
 - Translation: OpenAI-compatible Chat Completions API
 - TTS: VoxCPM2
 - Media processing: FFmpeg, pydub, librosa, audiostretchy
@@ -356,11 +395,12 @@ npm --prefix apps/web run build
 Main project directories:
 
 ```text
-backend/app/       FastAPI API, task worker, pipeline, and model adapters
-backend/tests/     Backend unit tests
-apps/web/          Next.js WebUI
-scripts/           Helper scripts
-submodule/demucs/  Demucs source submodule
+backend/app/          FastAPI API, task worker, pipeline, and model adapters
+backend/tests/        Backend unit tests
+apps/web/             Next.js WebUI
+scripts/              Helper scripts
+services/funasr-vllm/ FunASR vLLM remote service scripts
+submodule/demucs/     Demucs source submodule
 ```
 
 ## Project Status and Contributing

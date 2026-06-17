@@ -10,9 +10,9 @@
 
 一个被真实创作者工作流验证过的开源视频本地化工具。
 
-YouDub WebUI 可以把单个 YouTube 或 Bilibili 视频自动转换成目标语言配音版：下载视频、分离人声与背景音、识别字幕、翻译、生成配音、混音、压制字幕，最后输出可在线播放和下载的新视频。
+YouDub WebUI 可以把单个 YouTube、Bilibili 视频或本地视频文件自动转换成目标语言配音版：下载视频（或读取本地文件）、分离人声与背景音、识别字幕、翻译、生成配音、混音、压制字幕，最后输出可在线播放和下载的新视频。
 
-核心成熟场景是 **YouTube 英文 -> 中文配音**；同时已经支持 **Bilibili 中文 -> 英文配音**。
+核心成熟场景是 **YouTube 英文 -> 中文配音**；同时已经支持 **Bilibili 中文 -> 英文配音** 和 **本地上传**。
 
 English README: [README.en.md](README.en.md)
 
@@ -113,6 +113,8 @@ sudo apt install -y ffmpeg nodejs npm
 brew install ffmpeg node
 ```
 
+> **FFmpeg Shared DLL 提示**：`torchaudio 2.11+` 使用 `torchcodec` 后端，需要 FFmpeg shared DLL。如果系统安装的是 `essentials_build`（静态编译），需要额外下载 `full_build-shared` 版本的 `bin/*.dll`，复制到 `.venv\Lib\site-packages\torchcodec\`。
+
 如果你的系统包管理器无法提供 Python 3.12，建议从 Python 官网、pyenv、conda/mamba 或发行版推荐方式安装；关键是后续创建虚拟环境时确认使用的是 3.12。
 
 ### 2. 克隆项目
@@ -126,6 +128,8 @@ git submodule update --init --recursive
 ```
 
 Demucs 以源码子模块引入，请不要跳过 `git submodule update`。
+
+> **依赖边界提示**：Windows 主 `.venv` 只运行后端、Whisper、SenseVoiceSmall、VoxCPM、Demucs 等本地能力，**不要在此环境中安装 vLLM**。LLM-based FunASR 模型（如 Fun-ASR-Nano）请通过 WSL2/Linux 远程 vLLM 服务或独立环境运行。
 
 ### 3. 安装依赖
 
@@ -208,7 +212,7 @@ cp env.txt.example .env
 | 变量 | 说明 |
 | --- | --- |
 | `WORKFOLDER` | 每个任务的媒体、分段音频和中间产物目录。 |
-| `MODEL_CACHE_DIR` | ModelScope 模型缓存目录，默认用于 VoxCPM2。 |
+| `MODEL_CACHE_DIR` | 模型缓存目录，默认用于 VoxCPM2、Qwen3-ASR 等。 |
 | `DEVICE` | 模型运行设备，例如 `auto`、`cuda`、`cuda:0`、`mps`、`mps:0` 或 `cpu`；`auto` 按 CUDA、MPS、CPU 顺序选择。 |
 | `DEMUCS_DEVICE` / `WHISPER_DEVICE` | 可选组件级设备覆盖；留空时使用 `DEVICE`。Whisper 选择 MPS 时会退回 CPU，因为词级时间戳对齐依赖 MPS 不支持的 float64 DTW。 |
 | `OPENAI_BASE_URL` | OpenAI 兼容 API 地址，例如 `https://api.openai.com/v1`。 |
@@ -220,7 +224,13 @@ cp env.txt.example .env
 | `NO_PROXY` | 逗号分隔的代理绕过列表；使用本地 OpenAI 兼容服务时建议包含 `localhost,127.0.0.1,::1`，避免本地请求绕行系统代理。 |
 | `VOXCPM_MODEL` / `VOXCPM_MODEL_DIR` | VoxCPM2 的 ModelScope 模型名或本地模型目录；VoxCPM 当前由上游包内部选择 CUDA/MPS/CPU，任务日志会显示为 `voxcpm=library-auto`。 |
 | `VOXCPM_LOAD_DENOISER` / `VOXCPM_CFG_VALUE` / `VOXCPM_INFERENCE_TIMESTEPS` / `VOXCPM_MIN_REFERENCE_MS` | VoxCPM2 推理参数。 |
+| `LOCAL_UPLOAD_MAX_BYTES` | 本地上传最大字节数，默认 `4294967296`（4GB）。 |
+| `FUNASR_MODEL` / `FUNASR_VAD_MODEL` | 默认 FunASR 模型与 VAD 模型。 |
+| `FUNASR_USE_VLLM` | 本地 vLLM 引擎开关：`auto`/`on`/`off`，默认 `auto`。 |
+| `FUNASR_REMOTE_*` | 远程 vLLM 服务配置，包括 `BASE_URL`、`ENDPOINT`、`PATH_MODE`、`TIMEOUT`、`AUTOSTART`、`AUTOSTOP` 等。 |
 | `CORS_ALLOW_ORIGINS` / `CORS_ALLOW_ORIGIN_REGEX` | 自定义前端访问来源。 |
+
+更多环境变量默认值和说明请参考 `env.txt.example`。
 
 常见本机、局域网和 Tailscale 的 `:3000` 前端来源已默认允许；如果通过自定义域名访问前端，把完整 origin 追加到 `CORS_ALLOW_ORIGINS`，例如 `http://youdub.example.com:3000`。
 
@@ -268,16 +278,43 @@ http://localhost:3000
 
 如果从局域网、WSL2 或远程机器访问，浏览器里使用运行前端机器的实际 IP 或主机名，例如 `http://192.168.1.20:3000`。后端默认监听 `0.0.0.0:8000`，前端默认监听 `0.0.0.0:3000`。
 
+> **上传限制**：Next.js 代理请求体限制已设置为 `2000mb`。如需更大上传，需同时调整 `next.config.ts` 中的 `proxyClientMaxBodySize` 和 `LOCAL_UPLOAD_MAX_BYTES`。
+
 ## 页面里怎么用
 
+### 首次配置
+
 1. 打开右上角 Settings。
-2. 粘贴 Netscape 格式 YouTube Cookie。
+2. 粘贴 Netscape 格式 YouTube Cookie（处理 YouTube 视频时推荐）。
 3. 设置 yt-dlp 代理端口，例如 `7890` 或 `20171`。
 4. 填写 OpenAI base URL 和 API key。
 5. 点击 `Get models` 拉取模型列表，或手动输入模型名。
 6. 按 API 提供商额度调整 `Translate concurrency`。
-7. 回到首页，提交 YouTube URL 或 Bilibili URL。
-8. 进入任务详情页查看阶段进度、运行日志和最终视频。
+
+### 创建任务
+
+首页支持两种入口：
+
+- **URL 任务**：粘贴 YouTube 或 Bilibili 视频链接，选择翻译方向（如 `en -> zh` 或 `zh -> en`），并可选择 ASR 模型、是否嵌入字幕。
+- **本地上传**：拖拽或选择本地视频文件（支持 `.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`），选择翻译方向后上传；上传完成后会自动转码为 h.264 + aac MP4。
+
+创建时可配置的选项：
+
+- **ASR 模型**：Whisper large-v3-turbo / Whisper large-v3 / SenseVoiceSmall / Fun-ASR-Nano / Qwen3-ASR。
+- **翻译模式**：`sentence`（逐句翻译，速度快）或 `batch`（分批上下文感知翻译，速度较慢）。
+- **翻译校验**：开启后会对翻译结果进行质量检查并自动修正问题。
+- **字幕**：是否将翻译字幕嵌入最终视频。
+
+### 任务管理
+
+进入任务详情页可以：
+
+- 查看阶段进度、运行日志和最终视频。
+- **停止任务**：运行中的任务可以在下一个安全检查点停止，已成功的阶段会保留，之后可继续执行。
+- **继续任务**：失败或被停止的任务可恢复执行。
+- **重跑任务/级联重跑**：重跑整个任务，或从指定阶段开始重跑下游链路。
+- **清理阶段产出**：删除指定阶段的 output 文件，将其重置为 pending。
+- **更新配置**：在非运行状态下可修改 ASR 模型、翻译方向、翻译模式、校验开关和字幕选项。
 
 API key 和 Cookie 会在页面中脱敏显示，后端不会把 Cookie 明文返回给前端。
 
@@ -295,12 +332,12 @@ API key 和 Cookie 会在页面中脱敏显示，后端不会把 Cookie 明文�
 ## 工作流程
 
 ```text
-YouTube / Bilibili URL
-  -> yt-dlp 下载单个视频
+YouTube / Bilibili URL 或本地视频
+  -> 下载/读取视频并转码为统一格式
   -> Demucs 分离人声与背景音
-  -> Whisper 识别语音并输出词级时间戳
+  -> ASR（Whisper / SenseVoiceSmall / Fun-ASR-Nano / Qwen3-ASR）识别语音并输出词级时间戳
   -> 句子与时间范围整理
-  -> OpenAI 兼容 API 预处理全文并逐句并发翻译
+  -> OpenAI 兼容 API 预处理全文并翻译（sentence / batch 模式，可选校验修正）
   -> 按句切分原始人声作为参考音频
   -> VoxCPM2 生成目标语言配音
   -> 对齐配音时长并与背景音混音
@@ -309,14 +346,16 @@ YouTube / Bilibili URL
 
 ## 功能亮点
 
-- **真实可用的端到端流程**：从 URL 到最终视频，不需要手动拆分音频、整理字幕或压制视频。
-- **双来源入口**：YouTube 英文 -> 中文是核心成熟场景；Bilibili 中文 -> 英文也已接入同一条任务流水线。
+- **真实可用的端到端流程**：从 URL 或本地文件到最终视频，不需要手动拆分音频、整理字幕或压制视频。
+- **多来源入口**：支持 YouTube、Bilibili 和本地上传；YouTube 英文 -> 中文是核心成熟场景，Bilibili 中文 -> 英文也已接入同一条任务流水线。
+- **多 ASR 后端**：可选 Whisper large-v3-turbo / large-v3、SenseVoiceSmall、Fun-ASR-Nano（本地/远程 vLLM）或 Qwen3-ASR（本地 transformers）。
+- **灵活翻译**：支持 `sentence` 逐句翻译和 `batch` 上下文感知分批翻译；可开启翻译校验，自动检查并修正翻译问题。
+- **断点续传**：翻译阶段自动保存检查点，失败后可从中断处恢复；翻译校验同样支持增量检查点。
+- **任务可控**：支持停止运行中的任务、从失败/停止处恢复、重跑整个任务、级联重跑指定阶段，以及清理阶段产出。
 - **本地优先**：SQLite、Cookie、日志、中间产物和最终视频都保存在本机目录中。
 - **可观察任务进度**：任务历史、阶段状态、阶段耗时、运行日志和错误信息都可以在页面里查看。
-- **失败可恢复**：失败任务可以从失败阶段继续执行，已成功阶段会复用缓存产物。
-- **可重跑可清理**：支持按任务 rerun，也支持删除任务记录、日志和 `workfolder/` 下的会话目录。
 - **结果可检查**：任务成功后可在页面内播放最终视频，也可以下载 mp4 文件。
-- **设置在 UI 内完成**：YouTube Cookie、yt-dlp 代理端口、OpenAI base URL、API key、模型名和翻译并发数都可在 Settings 中维护。
+- **设置在 UI 内完成**：YouTube Cookie、yt-dlp 代理端口、OpenAI base URL、API key、模型名、翻译并发数、ASR 模型、翻译模式和字幕开关都可在 UI 中维护。
 - **适合二次开发**：管线串行、模块边界清晰，方便替换 ASR、翻译、TTS 或字幕样式。
 
 ## 技术栈
@@ -325,7 +364,7 @@ YouTube / Bilibili URL
 - Backend: FastAPI, SQLite, in-process background worker
 - Download: yt-dlp
 - Source separation: Demucs source submodule
-- ASR: openai-whisper（默认 `large-v3-turbo`）
+- ASR: openai-whisper（默认 `large-v3-turbo`）、FunASR（SenseVoiceSmall / Fun-ASR-Nano）、Qwen3-ASR
 - Translation: OpenAI-compatible Chat Completions API
 - TTS: VoxCPM2
 - Media processing: FFmpeg, pydub, librosa, audiostretchy
@@ -356,11 +395,12 @@ npm --prefix apps/web run build
 项目的主要目录：
 
 ```text
-backend/app/       FastAPI API、任务队列、流水线和模型适配器
-backend/tests/     后端单元测试
-apps/web/          Next.js WebUI
-scripts/           辅助脚本
-submodule/demucs/  Demucs 源码子模块
+backend/app/          FastAPI API、任务队列、流水线和模型适配器
+backend/tests/        后端单元测试
+apps/web/             Next.js WebUI
+scripts/              辅助脚本
+services/funasr-vllm/ FunASR vLLM 远程服务脚本
+submodule/demucs/     Demucs 源码子模块
 ```
 
 ## 项目状态与贡献

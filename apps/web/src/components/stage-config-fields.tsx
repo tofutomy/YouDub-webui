@@ -82,7 +82,7 @@ export function TranslateModeSelect({ id = "translate-mode", value, onChange }: 
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{t.home.translateModeLabel}</Label>
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value} onValueChange={(v) => onChange(v ?? "sentence")}>
         <SelectTrigger id={id} className="h-10">
           <SelectValue />
         </SelectTrigger>
@@ -130,7 +130,7 @@ export function TtsModeSelect({ id = "tts-mode", value, onChange }: TtsModeSelec
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{t.home.ttsModeLabel}</Label>
-      <Select value={value} onValueChange={onChange}>
+      <Select value={value} onValueChange={(v) => onChange(v ?? "controllable_clone")}>
         <SelectTrigger id={id} className="h-10">
           <SelectValue />
         </SelectTrigger>

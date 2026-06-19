@@ -47,6 +47,7 @@ def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
     task_id = database.create_task(
         "https://www.bilibili.com/video/BV1UNAbzpEzR",
         task_id="BV1UNAbzpEzR",
+        validate_translation=True,
     )
     client = TestClient(main.app)
 
@@ -57,6 +58,9 @@ def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
             "asr_language": "en",
             "target_language": "zh",
             "asr_model": "",
+            "translate_mode": "batch",
+            "validate_translation": False,
+            "tts_mode": "hifi_clone",
         },
     )
 
@@ -65,7 +69,12 @@ def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
     assert body["id"] == task_id
     assert body["asr_language"] == "en"
     assert body["target_language"] == "zh"
-    assert database.get_task(task_id)["asr_language"] == "en"
+    assert body["translate_mode"] == "batch"
+    assert body["validate_translation"] == 0
+    assert body["tts_mode"] == "hifi_clone"
+    task = database.get_task(task_id)
+    assert task["asr_language"] == "en"
+    assert task["validate_translation"] == 0
     assert enqueued == []
 
 
@@ -351,7 +360,17 @@ def test_rerun_task_purges_session_and_requeues(monkeypatch, tmp_path):
     enqueued: list[str] = []
     monkeypatch.setattr(main.worker, "enqueue", lambda task_id: enqueued.append(task_id))
 
-    task_id = database.create_task("https://www.youtube.com/watch?v=rerunvideox", task_id="rerunvideox")
+    task_id = database.create_task(
+        "https://www.youtube.com/watch?v=rerunvideox",
+        task_id="rerunvideox",
+        asr_language="zh",
+        target_language="en",
+        add_subtitles=False,
+        asr_model="funasr:iic/SenseVoiceSmall",
+        translate_mode="batch",
+        validate_translation=True,
+        tts_mode="hifi_clone",
+    )
     session = config.WORKFOLDER / "uploader" / "title__rerunvideox"
     (session / "media").mkdir(parents=True)
     (session / "media" / "video_source.mp4").write_bytes(b"old")
@@ -367,6 +386,13 @@ def test_rerun_task_purges_session_and_requeues(monkeypatch, tmp_path):
     assert body["id"] == task_id
     assert body["status"] == "queued"
     assert body["session_path"] is None
+    assert body["asr_language"] == "zh"
+    assert body["target_language"] == "en"
+    assert body["add_subtitles"] == 0
+    assert body["asr_model"] == "funasr:iic/SenseVoiceSmall"
+    assert body["translate_mode"] == "batch"
+    assert body["validate_translation"] == 1
+    assert body["tts_mode"] == "hifi_clone"
     assert enqueued == [task_id]
     assert not session.exists()
     assert not log_file.exists()

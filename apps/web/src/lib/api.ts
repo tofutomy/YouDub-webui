@@ -186,8 +186,8 @@ export function createTask(url: string, direction?: LocalDirection, addSubtitles
   if (translateMode) {
     body.translate_mode = translateMode
   }
-  if (validateTranslation) {
-    body.validate_translation = true
+  if (validateTranslation !== undefined) {
+    body.validate_translation = validateTranslation
   }
   if (ttsMode) {
     body.tts_mode = ttsMode
@@ -210,8 +210,8 @@ export async function uploadLocalTask(file: File, direction: LocalDirection, add
   if (translateMode) {
     form.append("translate_mode", translateMode)
   }
-  if (validateTranslation) {
-    form.append("validate_translation", "true")
+  if (validateTranslation !== undefined) {
+    form.append("validate_translation", String(validateTranslation))
   }
   if (ttsMode) {
     form.append("tts_mode", ttsMode)

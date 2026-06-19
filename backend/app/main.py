@@ -186,6 +186,8 @@ def create_task(payload: TaskCreate) -> dict:
             fields["asr_model"] = payload.asr_model or None
         if payload.translate_mode is not None:
             fields["translate_mode"] = payload.translate_mode or None
+        if _payload_has_field(payload, "validate_translation"):
+            fields["validate_translation"] = int(payload.validate_translation)
         if payload.tts_mode is not None:
             fields["tts_mode"] = payload.tts_mode or None
         if fields:
@@ -387,8 +389,17 @@ def rerun_task(task_id: str) -> dict:
 
     _ensure_runtime_ready()
     url = task["url"]
+    preserved_config = {
+        "asr_language": task.get("asr_language"),
+        "target_language": task.get("target_language"),
+        "add_subtitles": task.get("add_subtitles", 1) != 0,
+        "asr_model": task.get("asr_model"),
+        "translate_mode": task.get("translate_mode"),
+        "validate_translation": task.get("validate_translation") == 1,
+        "tts_mode": task.get("tts_mode"),
+    }
     _purge_task(task)
-    new_id = database.create_task(url, task_id=task_id)
+    new_id = database.create_task(url, task_id=task_id, **preserved_config)
     worker.enqueue(new_id)
     return database.get_task(new_id)
 

@@ -493,6 +493,8 @@ def test_cors_origin_regex_allows_common_development_hosts(monkeypatch):
     assert regex.fullmatch("http://10.0.0.5:3000")
     assert regex.fullmatch("http://172.27.2.90:3000")
     assert regex.fullmatch("http://100.94.222.54:3000")
+    assert regex.fullmatch("http://localhost:3080")
+    assert regex.fullmatch("http://192.168.1.2:3080")
     assert not regex.fullmatch("http://example.com:3000")
     assert not regex.fullmatch("http://192.168.1.2:4000")
 

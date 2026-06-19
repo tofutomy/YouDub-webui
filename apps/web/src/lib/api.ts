@@ -43,6 +43,7 @@ export type Task = {
   stop_requested: number | null
   translate_mode: string | null
   validate_translation: number | null
+  tts_mode: string | null
 }
 
 export type CookieInfo = {
@@ -157,6 +158,7 @@ export function updateTaskConfig(taskId: string, config: {
   add_subtitles?: boolean
   translate_mode?: string | null
   validate_translation?: boolean
+  tts_mode?: string | null
 }) {
   return request<Task>(`/api/tasks/${taskId}/config`, {
     method: "PATCH",
@@ -168,7 +170,7 @@ export function clearStageOutput(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/clear-stage/${stageName}`, { method: "POST" })
 }
 
-export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean) {
+export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string) {
   const body: Record<string, unknown> = { url }
   if (direction) {
     const parts = direction.split("-")
@@ -187,13 +189,16 @@ export function createTask(url: string, direction?: LocalDirection, addSubtitles
   if (validateTranslation) {
     body.validate_translation = true
   }
+  if (ttsMode) {
+    body.tts_mode = ttsMode
+  }
   return request<Task>("/api/tasks", {
     method: "POST",
     body: JSON.stringify(body),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean) {
+export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string) {
   const form = new FormData()
   form.append("direction", direction)
   if (addSubtitles !== undefined) {
@@ -207,6 +212,9 @@ export async function uploadLocalTask(file: File, direction: LocalDirection, add
   }
   if (validateTranslation) {
     form.append("validate_translation", "true")
+  }
+  if (ttsMode) {
+    form.append("tts_mode", ttsMode)
   }
   form.append("file", file)
 

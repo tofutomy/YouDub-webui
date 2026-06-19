@@ -346,6 +346,20 @@ FUNASR_REMOTE_HOTWORDS=
 | `VOXCPM_MODEL` | `OpenBMB/VoxCPM2` | VoxCPM 模型名 |
 | `VOXCPM_MODEL_DIR` | (空) | 本地模型目录（可选） |
 
+### TTS 克隆模式
+
+TTS 阶段支持两种 VoxCPM2 克隆模式，通过任务级配置 `tts_mode` 选择：
+
+| 模式 | `tts_mode` 值 | 说明 |
+|------|---------------|------|
+| **可控声音克隆** | `controllable_clone`（默认） | 从参考音频提取音色克隆，支持 `(描述)` 风格控制指令。只需 `reference_wav_path`。 |
+| **高保真克隆** | `hifi_clone` | 使用参考音频 + 精确文本实现最高保真度克隆。需 `prompt_wav_path` + `prompt_text` + `reference_wav_path`。控制指令被忽略。 |
+
+- 默认值为 `controllable_clone`，与旧行为兼容。
+- Hi-Fi 模式的 `prompt_text` 自动从翻译 JSON 的 `src` 字段（原始 ASR 文本）获取。
+- 可在任务详情页 TTS 阶段的齿轮图标中切换模式（仅 non-running 任务）。
+- `tts_mode` 为 `null` 时等同于 `controllable_clone`。
+
 ## Python 依赖边界
 
 - Python 版本：3.12

@@ -402,7 +402,7 @@ class PipelineRunner:
         self.artifacts.vocals_dir = split_audio_by_translation(vocals_file, translation_file, session)
         self.stage_message("split_audio", "Created vocal reference segments")
 
-    def _tts(self, _: dict) -> None:
+    def _tts(self, task: dict) -> None:
         from .adapters.voxcpm import generate_tts
 
         session = _require(self.artifacts.session, "session")
@@ -412,6 +412,7 @@ class PipelineRunner:
             translation_file,
             vocals_dir,
             session,
+            tts_mode=task.get("tts_mode"),
             progress_callback=lambda progress, message: self.stage_progress("tts", progress, message),
         )
         wav_count = len(list(self.artifacts.tts_dir.glob("*.wav")))

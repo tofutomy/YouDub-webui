@@ -52,6 +52,7 @@ def generate_tts(
     translation_file: Path,
     vocals_dir: Path,
     session: Path,
+    tts_mode: str | None = None,
     progress_callback: Callable[[int, str], None] | None = None,
 ) -> Path:
     output_dir = session / "segments" / "tts"
@@ -67,6 +68,7 @@ def generate_tts(
     model = _load_model()
     min_reference_ms = int(os.getenv("VOXCPM_MIN_REFERENCE_MS", "1200"))
     fallback = _fallback_reference(vocals_dir, min_reference_ms)
+    use_hifi = tts_mode == "hifi_clone"
 
     for index, item in enumerate(items, start=1):
         output_file = output_dir / f"{index:04d}.wav"
@@ -74,12 +76,25 @@ def generate_tts(
             reference = vocals_dir / f"{index:04d}.wav"
             if not reference.exists() or len(AudioSegment.from_file(reference)) < min_reference_ms:
                 reference = fallback
-            wav = model.generate(
-                text=item.get("dst") or item.get("zh", ""),
-                reference_wav_path=str(reference),
-                cfg_value=float(os.getenv("VOXCPM_CFG_VALUE", "2.0")),
-                inference_timesteps=int(os.getenv("VOXCPM_INFERENCE_TIMESTEPS", "10")),
-            )
+            cfg = float(os.getenv("VOXCPM_CFG_VALUE", "2.0"))
+            steps = int(os.getenv("VOXCPM_INFERENCE_TIMESTEPS", "10"))
+            text = item.get("dst") or item.get("zh", "")
+            if use_hifi:
+                wav = model.generate(
+                    text=text,
+                    prompt_wav_path=str(reference),
+                    prompt_text=item.get("src", ""),
+                    reference_wav_path=str(reference),
+                    cfg_value=cfg,
+                    inference_timesteps=steps,
+                )
+            else:
+                wav = model.generate(
+                    text=text,
+                    reference_wav_path=str(reference),
+                    cfg_value=cfg,
+                    inference_timesteps=steps,
+                )
             sf.write(output_file, wav, model.tts_model.sample_rate)
         if progress_callback:
             progress = round(index / total * 100)

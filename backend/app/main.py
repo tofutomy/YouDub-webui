@@ -41,6 +41,7 @@ class TaskCreate(BaseModel):
     asr_model: str | None = None
     translate_mode: str | None = None
     validate_translation: bool = False
+    tts_mode: str | None = None
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -126,12 +127,13 @@ DEFAULT_CORS_ORIGIN_REGEX = (
     r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|"
     r"100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|"
     r"\[::1\]"
-    r"):3000$"
+    r"):30[08]0$"
 )
 
 
 def cors_origins() -> list[str]:
-    defaults = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    defaults = ["http://localhost:3000", "http://127.0.0.1:3000",
+                "http://localhost:3080", "http://127.0.0.1:3080"]
     configured = os.getenv("CORS_ALLOW_ORIGINS", "")
     extra = [origin.strip() for origin in configured.split(",") if origin.strip()]
     return [*defaults, *extra]
@@ -184,6 +186,8 @@ def create_task(payload: TaskCreate) -> dict:
             fields["asr_model"] = payload.asr_model or None
         if payload.translate_mode is not None:
             fields["translate_mode"] = payload.translate_mode or None
+        if payload.tts_mode is not None:
+            fields["tts_mode"] = payload.tts_mode or None
         if fields:
             database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
@@ -198,6 +202,7 @@ def create_task(payload: TaskCreate) -> dict:
         asr_model=payload.asr_model,
         translate_mode=payload.translate_mode,
         validate_translation=payload.validate_translation,
+        tts_mode=payload.tts_mode,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -240,6 +245,7 @@ def upload_local_video(
     asr_model: str = Form(""),
     translate_mode: str = Form(""),
     validate_translation: bool = Form(False),
+    tts_mode: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
@@ -268,6 +274,7 @@ def upload_local_video(
         asr_model=asr_model or None,
         translate_mode=translate_mode or None,
         validate_translation=validate_translation,
+        tts_mode=tts_mode or None,
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -286,6 +293,7 @@ class TaskConfigUpdate(BaseModel):
     add_subtitles: bool | None = None
     translate_mode: str | None = None
     validate_translation: bool | None = None
+    tts_mode: str | None = None
 
 
 def _payload_has_field(payload: BaseModel, field: str) -> bool:
@@ -315,6 +323,8 @@ def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
         fields["translate_mode"] = payload.translate_mode or None
     if _payload_has_field(payload, "validate_translation") and payload.validate_translation is not None:
         fields["validate_translation"] = int(payload.validate_translation)
+    if _payload_has_field(payload, "tts_mode"):
+        fields["tts_mode"] = payload.tts_mode or None
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)

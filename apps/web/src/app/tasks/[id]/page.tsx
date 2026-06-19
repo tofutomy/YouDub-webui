@@ -37,6 +37,15 @@ import {
 import { useI18n, STAGE_INFO } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
+import {
+  AsrModelSelect,
+  DirectionSelect,
+  TranslateModeSelect,
+  ValidateTranslationCheckbox,
+  TtsModeSelect,
+  AddSubtitlesCheckbox,
+} from "@/components/stage-config-fields"
+import type { Direction } from "@/components/stage-config-fields"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -57,14 +66,6 @@ import {
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { Label } from "@/components/ui/label"
 
 function stageIcon(status: StageStatus) {
   if (status === "succeeded") return <CheckCircle2 className="size-5 text-[#00aeec]" />
@@ -134,10 +135,11 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [clearStageError, setClearStageError] = useState("")
   // Config form state
   const [cfgAsrModel, setCfgAsrModel] = useState("")
-  const [cfgDirection, setCfgDirection] = useState<"en-zh" | "zh-en">("en-zh")
+  const [cfgDirection, setCfgDirection] = useState<Direction>("en-zh")
   const [cfgAddSubtitles, setCfgAddSubtitles] = useState(true)
   const [cfgTranslateMode, setCfgTranslateMode] = useState("sentence")
   const [cfgValidateTranslation, setCfgValidateTranslation] = useState(false)
+  const [cfgTtsMode, setCfgTtsMode] = useState("controllable_clone")
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -246,6 +248,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setCfgAddSubtitles(task.add_subtitles !== 0)
       setCfgTranslateMode(task.translate_mode || "sentence")
       setCfgValidateTranslation(task.validate_translation === 1)
+      setCfgTtsMode(task.tts_mode || "controllable_clone")
     }
   }
 
@@ -266,6 +269,8 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
         config.validate_translation = cfgValidateTranslation
       } else if (configStageTarget === "merge_video") {
         config.add_subtitles = cfgAddSubtitles
+      } else if (configStageTarget === "tts") {
+        config.tts_mode = cfgTtsMode
       }
       const next = await updateTaskConfig(id, config as Parameters<typeof updateTaskConfig>[1])
       setTask(next)
@@ -280,6 +285,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const STAGE_CONFIG_MAP: Record<string, string[]> = {
     asr: ["asr_model"],
     translate: ["direction"],
+    tts: ["tts_mode"],
     merge_video: ["add_subtitles"],
   }
 
@@ -689,69 +695,42 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                   <DialogTitle>{t.task.stageConfigTitle}</DialogTitle>
                 </DialogHeader>
                 {configStageTarget === "asr" ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="cfg-asr-model">{t.home.asrModelLabel}</Label>
-                    <Select value={cfgAsrModel} onValueChange={(v) => setCfgAsrModel(v ?? "")}>
-                      <SelectTrigger id="cfg-asr-model" className="h-10">
-                        <SelectValue placeholder={t.home.asrWhisperTurbo} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="">{t.home.asrWhisperTurbo}</SelectItem>
-                        <SelectItem value="whisper:large-v3">{t.home.asrWhisperLarge}</SelectItem>
-                        <SelectItem value="funasr:iic/SenseVoiceSmall">{t.home.asrSenseVoice}</SelectItem>
-                        <SelectItem value="funasr:FunAudioLLM/Fun-ASR-Nano-2512">{t.home.asrFunAsrNano}</SelectItem>
-                        <SelectItem value="qwen3asr:Qwen/Qwen3-ASR-1.7B">{t.home.asrQwen3Asr}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                  <AsrModelSelect
+                    id="cfg-asr-model"
+                    value={cfgAsrModel}
+                    onChange={setCfgAsrModel}
+                  />
                 ) : null}
                 {configStageTarget === "translate" ? (
                   <div className="space-y-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="cfg-direction">{t.home.localDirectionLabel}</Label>
-                      <Select value={cfgDirection} onValueChange={(v) => setCfgDirection(v as "en-zh" | "zh-en")}>
-                        <SelectTrigger id="cfg-direction" className="h-10">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
-                          <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="cfg-translate-mode">{t.home.translateModeLabel}</Label>
-                      <Select value={cfgTranslateMode} onValueChange={(v) => setCfgTranslateMode(v)}>
-                        <SelectTrigger id="cfg-translate-mode" className="h-10">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="sentence">{t.home.translateModeSentence}</SelectItem>
-                          <SelectItem value="batch">{t.home.translateModeBatch}</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <label className="flex cursor-pointer items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        className="size-4 rounded border-gray-300"
-                        checked={cfgValidateTranslation}
-                        onChange={(e) => setCfgValidateTranslation(e.target.checked)}
-                      />
-                      {t.home.validateTranslation}
-                    </label>
+                    <DirectionSelect
+                      id="cfg-direction"
+                      value={cfgDirection}
+                      onChange={setCfgDirection}
+                    />
+                    <TranslateModeSelect
+                      id="cfg-translate-mode"
+                      value={cfgTranslateMode}
+                      onChange={setCfgTranslateMode}
+                    />
+                    <ValidateTranslationCheckbox
+                      checked={cfgValidateTranslation}
+                      onChange={setCfgValidateTranslation}
+                    />
                   </div>
                 ) : null}
+                {configStageTarget === "tts" ? (
+                  <TtsModeSelect
+                    id="cfg-tts-mode"
+                    value={cfgTtsMode}
+                    onChange={setCfgTtsMode}
+                  />
+                ) : null}
                 {configStageTarget === "merge_video" ? (
-                  <label className="flex cursor-pointer items-center gap-2 text-sm">
-                    <input
-                      type="checkbox"
-                      className="size-4 rounded border-gray-300"
-                      checked={cfgAddSubtitles}
-                      onChange={(e) => setCfgAddSubtitles(e.target.checked)}
-                    />
-                    {t.home.addSubtitles}
-                  </label>
+                  <AddSubtitlesCheckbox
+                    checked={cfgAddSubtitles}
+                    onChange={setCfgAddSubtitles}
+                  />
                 ) : null}
                 {configError ? (
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

@@ -426,6 +426,21 @@ class PipelineRunner:
             f"Translated {len(items)} sentences -> {self.artifacts.translation_file.name}",
         )
 
+        # For localdir tasks, copy SRT subtitle back to the source video directory
+        if is_localdir_url(task["url"]):
+            import shutil
+            from .youtube import localdir_source_path
+            try:
+                src_path = Path(localdir_source_path(task["url"]))
+                if src_path.is_file():
+                    srt_file = session / "metadata" / f"subtitles.{source.target_language}.srt"
+                    if srt_file.exists():
+                        target_srt = src_path.with_suffix(".srt")
+                        shutil.copy2(srt_file, target_srt)
+                        self.stage_message("translate", f"SRT copied to {target_srt}")
+            except Exception as exc:
+                self.stage_message("translate", f"Warning: failed to copy SRT to source dir: {exc}")
+
     def _split_audio(self, _: dict) -> None:
         from .adapters.audio import split_audio_by_translation
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -24,10 +23,6 @@ logger = logging.getLogger(__name__)
 
 _MODEL = None
 _ALIGNER = None
-
-# Sentence-level punctuation used to split word timestamps into utterances.
-_SENTENCE_END = re.compile(r"[.!?;:\u3002\uff01\uff1f\uff1b\uff1a]+$")
-_CLAUSE_END = re.compile(r"[,\u3001\uff0c\u2014\u2013]+$")
 
 # Language code → human-readable name for Qwen3-ASR.
 _LANG_MAP = {
@@ -142,34 +137,6 @@ def _to_ms(seconds: float) -> int:
     return int(round(seconds * 1000))
 
 
-def _split_text_into_sentences(text: str) -> list[str]:
-    """Split text into sentences using sentence-ending punctuation.
-
-    Returns a list of non-empty sentence strings (punctuation preserved).
-    """
-    # Split after sentence-ending punctuation, keeping the delimiter.
-    # Skip '.' that is a decimal point (digit.digit) to avoid splitting
-    # numbers like "4.5" or "3.14" into two sentences.
-    parts: list[str] = []
-    current: list[str] = []
-    for i, ch in enumerate(text):
-        current.append(ch)
-        if ch in ".!?\u3002\uff01\uff1f":
-            if ch == "." and i > 0 and i + 1 < len(text):
-                if text[i - 1].isdigit() and text[i + 1].isdigit():
-                    continue
-            parts.append("".join(current).strip())
-            current = []
-    trailing = "".join(current).strip()
-    if trailing:
-        parts.append(trailing)
-    return [s for s in parts if s]
-
-
-def _tokenize(text: str) -> list[str]:
-    """Extract whitespace-separated tokens from text."""
-    return [t for t in text.split() if t]
-
 
 def _group_words_to_utterances(
     words: list[dict[str, Any]],
@@ -178,76 +145,155 @@ def _group_words_to_utterances(
     """Group word-level timestamp items into sentence-level utterances.
 
     The ForcedAligner returns word timestamps *without* punctuation tokens.
-    We use the punctuated ``full_text`` to determine sentence boundaries,
-    then sequentially match each sentence's words against the timestamp list.
+    We first strip all punctuation from ``full_text`` to create a *cleaned*
+    text, then match each word token sequentially against the cleaned text to
+    determine each word's character position.  Sentence boundaries are derived
+    from sentence-ending punctuation in the original ``full_text`` (with
+    decimal-point protection for numbers like ``4.5``).
+
+    This approach works correctly for CJK languages (Japanese, Chinese, etc.)
+    where words are NOT separated by whitespace, as well as for space-delimited
+    languages like English.
     """
     if not words:
         return []
 
-    sentences = _split_text_into_sentences(full_text)
-    if len(sentences) <= 1:
-        # Only one sentence (or no punctuation) — return as-is.
-        text = " ".join(w["text"] for w in words).strip()
-        return [{
-            "text": text or full_text,
-            "start_time": words[0]["start_time"],
-            "end_time": words[-1]["end_time"],
-            "words": list(words),
-        }]
+    _ALL_PUNCT = set(".!?,;:\u3002\uff0c\u3001\uff01\uff1f\uff1b\uff1a")
+    _SENTENCE_PUNCT = set(".!?\u3002\uff01\uff1f\uff1b\uff1a")
 
+    # ------------------------------------------------------------------
+    # Step 1: Build cleaned text (no punctuation) and record the mapping
+    #         from cleaned-text positions back to original-text positions.
+    # ------------------------------------------------------------------
+    cleaned_chars: list[str] = []
+    clean_to_orig: list[int] = []  # clean_pos → orig_pos
+    for oi, ch in enumerate(full_text):
+        if ch not in _ALL_PUNCT:
+            cleaned_chars.append(ch)
+            clean_to_orig.append(oi)
+    cleaned = "".join(cleaned_chars)
+
+    # ------------------------------------------------------------------
+    # Step 2: Collect sentence-ending punctuation positions in the
+    #         original text (skip decimal dots: digit.digit).
+    # ------------------------------------------------------------------
+    sentence_punct_positions: list[int] = []
+    for oi, ch in enumerate(full_text):
+        if ch in _SENTENCE_PUNCT:
+            if ch == "." and oi > 0 and oi + 1 < len(full_text):
+                if full_text[oi - 1].isdigit() and full_text[oi + 1].isdigit():
+                    continue
+            sentence_punct_positions.append(oi)
+
+    # ------------------------------------------------------------------
+    # Step 3: Match each word against the cleaned text sequentially,
+    #         recording its position in the original text.
+    # ------------------------------------------------------------------
+    word_positions: list[tuple[dict[str, Any], int]] = []  # (word, orig_pos)
+    ci = 0  # current position in cleaned text
+    for word in words:
+        token = word["text"]
+        if token in _ALL_PUNCT:
+            continue  # skip punctuation tokens from the aligner
+
+        matched = False
+        while ci < len(cleaned):
+            remaining_clean = cleaned[ci:]
+            if remaining_clean.startswith(token):
+                orig_pos = clean_to_orig[ci]
+                word_positions.append((word, orig_pos))
+                ci += len(token)
+                matched = True
+                break
+            # Fallback: token might be a sub-word fragment that doesn't
+            # match the cleaned text exactly (e.g., Japanese morphemes
+            # split differently by the aligner).  Skip one character
+            # and try again.
+            ci += 1
+
+        if not matched:
+            # Exhausted cleaned text — append word at the last known
+            # position so it is not lost.
+            last_pos = word_positions[-1][1] if word_positions else 0
+            word_positions.append((word, last_pos))
+
+    if not word_positions:
+        return []
+
+    # ------------------------------------------------------------------
+    # Step 4: Assign each word to a sentence using the punctuation
+    #         positions as sentence boundaries.
+    # ------------------------------------------------------------------
     utterances: list[dict[str, Any]] = []
-    wi = 0  # current index into words list
+    current_words: list[dict[str, Any]] = []
+    current_first_orig: int = 0  # original-text position of first word in sentence
+    sentence_start_ci = 0  # cleaned-text offset of current sentence start
+    punct_idx = 0  # index into sentence_punct_positions
 
-    for sentence in sentences:
-        sentence_tokens = _tokenize(sentence)
-        if not sentence_tokens:
-            continue
+    for word, orig_pos in word_positions:
+        if not current_words:
+            current_first_orig = orig_pos
+        current_words.append(word)
 
-        # How many word-timestamp entries belong to this sentence.
-        # We greedily consume tokens from the word list that appear in
-        # the sentence text (ignoring punctuation differences).
-        matched: list[dict[str, Any]] = []
-        needed = len(sentence_tokens)
-        consumed = 0
-
-        while wi < len(words) and consumed < needed:
-            matched.append(words[wi])
-            wi += 1
-            consumed += 1
-
-        # Consume trailing punctuation-only tokens if any (unlikely
-        # with ForcedAligner, but safe).
-        while wi < len(words):
-            nxt = words[wi]["text"]
-            if nxt in ".!?,;:\u3002\uff0c\u3001\uff01\uff1f\uff1b\uff1a":
-                matched.append(words[wi])
-                wi += 1
-            else:
+        # Determine the cleaned-text position of this word to check if a
+        # sentence boundary falls between this word and the next.
+        # Find the cleaned-text offset that corresponds to orig_pos.
+        # We search forward in clean_to_orig from sentence_start_ci.
+        word_clean_end = 0
+        for c in range(sentence_start_ci, len(clean_to_orig)):
+            if clean_to_orig[c] >= orig_pos:
+                # This cleaned position is at or past the word's original
+                # position.  The word occupies [orig_pos, orig_pos+len(token)).
+                word_clean_end = c + len(word["text"])
                 break
 
-        if matched:
-            utterances.append({
-                "text": sentence,
-                "start_time": matched[0]["start_time"],
-                "end_time": matched[-1]["end_time"],
-                "words": matched,
-            })
+        # Check if there's a sentence-ending punctuation in the original
+        # text between the end of this word and the start of the next word.
+        # The "next word start" in original text is the next clean_to_orig
+        # entry after word_clean_end.
+        next_orig_start = len(full_text)  # default: end of text
+        if word_clean_end < len(clean_to_orig):
+            next_orig_start = clean_to_orig[word_clean_end]
 
-    # Any remaining words go into a trailing utterance.
-    if wi < len(words):
-        remaining = words[wi:]
-        text = " ".join(w["text"] for w in remaining).strip()
-        # Try to find the corresponding trailing text.
-        remaining_sentences = full_text
-        for utt in utterances:
-            remaining_sentences = remaining_sentences.replace(utt["text"], "", 1)
-        remaining_text = remaining_sentences.strip()
-        utterances.append({
-            "text": remaining_text or text,
-            "start_time": remaining[0]["start_time"],
-            "end_time": remaining[-1]["end_time"],
-            "words": remaining,
-        })
+        # Any sentence-ending punctuation between orig_pos and
+        # next_orig_start marks a sentence boundary.
+        has_boundary = False
+        boundary_orig = -1
+        while punct_idx < len(sentence_punct_positions):
+            pp = sentence_punct_positions[punct_idx]
+            if pp >= next_orig_start:
+                break  # punctuation is after the next word — not yet
+            if pp >= orig_pos:
+                has_boundary = True
+                boundary_orig = pp
+                punct_idx += 1
+                break
+            punct_idx += 1  # skip punctuation before this word
+
+        if has_boundary:
+            # Flush: sentence text spans from first word's original
+            # position to the punctuation character (inclusive).
+            sentence_text = full_text[current_first_orig:boundary_orig + 1].strip()
+            if sentence_text:
+                utterances.append({
+                    "text": sentence_text,
+                    "start_time": current_words[0]["start_time"],
+                    "end_time": current_words[-1]["end_time"],
+                    "words": list(current_words),
+                })
+            current_words = []
+            sentence_start_ci = word_clean_end
+
+    # Trailing words without sentence-ending punctuation.
+    if current_words:
+        sentence_text = full_text[current_first_orig:].strip()
+        if sentence_text:
+            utterances.append({
+                "text": sentence_text,
+                "start_time": current_words[0]["start_time"],
+                "end_time": current_words[-1]["end_time"],
+                "words": list(current_words),
+            })
 
     return utterances
 

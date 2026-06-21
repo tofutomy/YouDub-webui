@@ -196,11 +196,10 @@ export function AddSubtitlesCheckbox({ checked, onChange }: AddSubtitlesCheckbox
 interface SeparateModeSelectProps {
   id?: string
   demucs_shifts: number
-  use_amp: boolean
-  onChange: (patch: { demucs_model?: string; demucs_shifts?: number; use_amp?: boolean }) => void
+  onChange: (patch: { demucs_model?: string; demucs_shifts?: number }) => void
 }
 
-export function SeparateModeSelect({ id = "separate-mode", demucs_shifts, use_amp, onChange }: SeparateModeSelectProps) {
+export function SeparateModeSelect({ id = "separate-mode", demucs_shifts, onChange }: SeparateModeSelectProps) {
   const { t } = useI18n()
   const preset = demucs_shifts >= 3 ? "high_quality" : "balanced"
   return (
@@ -229,16 +228,6 @@ export function SeparateModeSelect({ id = "separate-mode", demucs_shifts, use_am
           {preset === "high_quality" ? t.home.separateModeHighQualityDesc : t.home.separateModeBalancedDesc}
         </p>
       </div>
-      <label className="flex cursor-pointer items-center gap-2 text-sm">
-        <input
-          type="checkbox"
-          className="size-4 rounded border-gray-300"
-          checked={use_amp}
-          onChange={(e) => onChange({ use_amp: e.target.checked })}
-        />
-        {t.home.useAmp}
-      </label>
-      <p className="text-xs text-muted-foreground pl-6">{t.home.useAmpDesc}</p>
     </div>
   )
 }

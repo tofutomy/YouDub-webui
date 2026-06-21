@@ -325,15 +325,12 @@ class PipelineRunner:
         demucs_shifts = task.get("demucs_shifts")
         if demucs_shifts is not None:
             demucs_shifts = int(demucs_shifts)
-        use_amp_raw = task.get("use_amp")
-        use_amp = bool(use_amp_raw) if use_amp_raw is not None else None
         self.artifacts.vocals_file, self.artifacts.bgm_file = separate_audio(
             video_file,
             session,
             progress_callback=lambda progress, message: self.stage_progress("separate", progress, message),
             demucs_model=demucs_model,
             shifts=demucs_shifts,
-            use_amp=use_amp,
         )
         self.stage_message("separate", f"Vocals: {self.artifacts.vocals_file.name}, BGM: {self.artifacts.bgm_file.name}")
 

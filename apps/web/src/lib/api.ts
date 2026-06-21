@@ -48,7 +48,6 @@ export type Task = {
   stop_after_translate: number | null
   demucs_model: string | null
   demucs_shifts: number | null
-  use_amp: number | null
 }
 
 export type CookieInfo = {
@@ -104,7 +103,6 @@ export type StageConfig = {
   stop_after_translate: boolean
   demucs_model: string
   demucs_shifts: number
-  use_amp: boolean
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 _CLEAR_ON_NULL = frozenset({"asr_model", "tts_mode", "translate_provider_id", "demucs_model"})
 _EMPTY_TO_NONE = frozenset({"asr_model", "translate_mode", "tts_mode", "translate_provider_id", "demucs_model"})
-_BOOL_TO_INT = frozenset({"add_subtitles", "validate_translation", "stop_after_translate", "use_amp"})
+_BOOL_TO_INT = frozenset({"add_subtitles", "validate_translation", "stop_after_translate"})
 
 
 class TaskConfig(BaseModel):
@@ -21,7 +21,6 @@ class TaskConfig(BaseModel):
     stop_after_translate: bool | None = None
     demucs_model: str | None = None
     demucs_shifts: int | None = None
-    use_amp: bool | None = None
 
     def to_db_fields(self, only_set: bool = False) -> dict[str, object]:
         fields: dict[str, object] = {}
@@ -57,5 +56,4 @@ class TaskConfig(BaseModel):
             stop_after_translate=bool(task.get("stop_after_translate")),
             demucs_model=task.get("demucs_model"),
             demucs_shifts=task.get("demucs_shifts"),
-            use_amp=bool(task.get("use_amp", 1)) if task.get("use_amp") is not None else None,
         )

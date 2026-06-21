@@ -41,7 +41,7 @@ export function AsrModelSelect({ id = "asr-model", value, onChange }: AsrModelSe
 
 /* ── Direction Select ── */
 
-type Direction = "en-zh" | "zh-en"
+type Direction = "en-zh" | "zh-en" | "ja-zh"
 
 interface DirectionSelectProps {
   id?: string
@@ -63,6 +63,7 @@ export function DirectionSelect({ id = "direction", value, onChange }: Direction
         <SelectContent>
           <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
           <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
+          <SelectItem value="ja-zh">{t.home.localJaZh}</SelectItem>
         </SelectContent>
       </Select>
     </div>

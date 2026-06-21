@@ -57,6 +57,7 @@ export function configForStage(stage: string, config: StageConfig): Partial<Stag
 
 function directionFromConfig(config: StageConfig): Direction {
   if (config.asr_language === "zh" && config.target_language === "en") return "zh-en"
+  if (config.asr_language === "ja" && config.target_language === "zh") return "ja-zh"
   return "en-zh"
 }
 

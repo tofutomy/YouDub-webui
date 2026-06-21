@@ -9,7 +9,7 @@ BILIBILI_BV_RE = re.compile(r"BV[A-Za-z0-9]{10}")
 BILIBILI_HOSTS = {"bilibili.com", "www.bilibili.com", "m.bilibili.com"}
 LOCAL_UPLOAD_SCHEME = "local"
 LOCAL_UPLOAD_HOST = "upload"
-LOCAL_UPLOAD_DIRECTIONS = {"en-zh", "zh-en"}
+LOCAL_UPLOAD_DIRECTIONS = {"en-zh", "zh-en", "ja-zh"}
 LOCAL_UPLOAD_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOCALDIR_SCHEME = "localdir"
 LOCALDIR_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -96,6 +96,10 @@ def is_local_zh_to_en_url(url: str) -> bool:
     return is_local_upload_url(url) and local_upload_direction(url) == "zh-en"
 
 
+def is_local_ja_to_zh_url(url: str) -> bool:
+    return is_local_upload_url(url) and local_upload_direction(url) == "ja-zh"
+
+
 # ---------------------------------------------------------------------------
 # localdir:// protocol — reads video directly from a local file path
 # Format: localdir://{task_id}?direction={dir}&path={encoded_path}&filename={name}
@@ -168,3 +172,7 @@ def is_localdir_en_to_zh_url(url: str) -> bool:
 
 def is_localdir_zh_to_en_url(url: str) -> bool:
     return is_localdir_url(url) and localdir_direction(url) == "zh-en"
+
+
+def is_localdir_ja_to_zh_url(url: str) -> bool:
+    return is_localdir_url(url) and localdir_direction(url) == "ja-zh"

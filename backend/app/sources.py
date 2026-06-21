@@ -8,14 +8,16 @@ from .config import COOKIE_DIR
 from .youtube import (
     is_bilibili_url,
     is_local_en_to_zh_url,
+    is_local_ja_to_zh_url,
     is_local_zh_to_en_url,
     is_localdir_en_to_zh_url,
+    is_localdir_ja_to_zh_url,
     is_localdir_zh_to_en_url,
     is_youtube_url,
 )
 
 
-LANG_NAMES = {"en": "English", "zh": "Simplified Chinese"}
+LANG_NAMES = {"en": "English", "zh": "Simplified Chinese", "ja": "Japanese"}
 DEFAULT_ASR_LANGUAGE = "en"
 DEFAULT_TARGET_LANGUAGE = "zh"
 
@@ -86,6 +88,22 @@ SOURCES: list[SourceConfig] = [
         target_language="en",
     ),
     SourceConfig(
+        name="local",
+        matches=is_local_ja_to_zh_url,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language="ja",
+        target_language="zh",
+    ),
+    SourceConfig(
+        name="localdir",
+        matches=is_localdir_ja_to_zh_url,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language="ja",
+        target_language="zh",
+    ),
+    SourceConfig(
         name="bilibili",
         matches=is_bilibili_url,
         use_proxy=False,
@@ -103,8 +121,11 @@ def detect_source(url: str) -> SourceConfig:
     raise ValueError(f"No source matches URL: {url}")
 
 
+_OPPOSITE_LANG: dict[str, str] = {"en": "zh", "zh": "en", "ja": "zh"}
+
+
 def _opposite_language(language: str) -> str:
-    return "zh" if language == "en" else "en"
+    return _OPPOSITE_LANG.get(language, "zh")
 
 
 def _task_languages(task: dict, source: SourceConfig) -> tuple[str, str]:

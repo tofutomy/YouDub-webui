@@ -87,7 +87,7 @@ export type TranslateProvider = {
   updated_at: string
 }
 
-export type LocalDirection = "en-zh" | "zh-en"
+export type LocalDirection = "en-zh" | "zh-en" | "ja-zh"
 
 export type StageConfig = {
   asr_model: string

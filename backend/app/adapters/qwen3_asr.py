@@ -124,11 +124,15 @@ def release_model() -> None:
         return
     _MODEL = None
     _ALIGNER = None
-    gc.collect()
+    # Multiple GC passes are needed because PyTorch models often contain
+    # reference cycles between modules, tensors, and autograd graphs.
+    for _ in range(3):
+        gc.collect()
     try:
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
     except Exception:
         pass
     logger.info("Qwen3-ASR models released from GPU memory")
@@ -313,6 +317,7 @@ def recognize_speech(
         raise RuntimeError("Qwen3-ASR did not return any results.")
 
     result = results[0]
+    del results  # release batch reference early
 
     # Save raw result for debugging.
     raw_output = metadata_dir / "asr.raw.qwen3asr.json"
@@ -335,6 +340,7 @@ def recognize_speech(
 
     duration_ms = len(AudioSegment.from_file(vocals_file))
     payload = _convert_result(result, duration_ms)
+    del result  # release ASR result (holds aligner output) early
 
     output_file.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2),

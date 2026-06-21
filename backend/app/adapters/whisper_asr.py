@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 from pathlib import Path
@@ -56,6 +57,26 @@ def _load_model():
         _MODEL = whisper.load_model(name, device=whisper_device, download_root=download_root)
 
     return _MODEL
+
+
+def release_model() -> None:
+    """Release the Whisper model from GPU memory.
+
+    Call this after ``recognize_speech`` completes to free VRAM when the
+    model is no longer needed.  Subsequent calls to ``recognize_speech``
+    will reload the model automatically.
+    """
+    global _MODEL
+    if _MODEL is None:
+        return
+    _MODEL = None
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
 
 
 def _to_ms(seconds: float) -> int:

@@ -362,8 +362,11 @@ class PipelineRunner:
                     vocals_file, session, language=source.asr_language, model_id=model_id
                 )
         else:
-            from .adapters.whisper_asr import recognize_speech
-            self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)
+            from .adapters.whisper_asr import recognize_speech, release_model
+            try:
+                self.artifacts.asr_file = recognize_speech(vocals_file, session, language=source.asr_language)
+            finally:
+                release_model()
 
         data = _json.loads(self.artifacts.asr_file.read_text(encoding="utf-8"))
         utterances = data["result"]["utterances"]

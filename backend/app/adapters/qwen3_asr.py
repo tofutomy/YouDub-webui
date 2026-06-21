@@ -16,6 +16,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+import gc
+
 from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
@@ -108,6 +110,28 @@ def _load_model():
         ),
     )
     return _MODEL
+
+
+def release_model() -> None:
+    """Release Qwen3-ASR and ForcedAligner models from GPU memory.
+
+    Call this after ``recognize_speech`` completes to free VRAM when the
+    model is no longer needed.  Subsequent calls to ``recognize_speech``
+    will reload the models automatically.
+    """
+    global _MODEL, _ALIGNER
+    if _MODEL is None and _ALIGNER is None:
+        return
+    _MODEL = None
+    _ALIGNER = None
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+    logger.info("Qwen3-ASR models released from GPU memory")
 
 
 def _to_ms(seconds: float) -> int:

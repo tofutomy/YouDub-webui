@@ -337,12 +337,15 @@ class PipelineRunner:
 
         asr_model = task.get("asr_model") or ""
         if asr_model.startswith("qwen3asr:"):
-            from .adapters.qwen3_asr import recognize_speech
+            from .adapters.qwen3_asr import recognize_speech, release_model
 
             self.stage_message("asr", "Using Qwen3-ASR (transformers backend)")
-            self.artifacts.asr_file = recognize_speech(
-                vocals_file, session, language=source.asr_language
-            )
+            try:
+                self.artifacts.asr_file = recognize_speech(
+                    vocals_file, session, language=source.asr_language
+                )
+            finally:
+                release_model()
         elif asr_model.startswith("funasr:"):
             from .adapters import remote_funasr_asr
 

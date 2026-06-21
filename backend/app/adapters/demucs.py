@@ -24,10 +24,16 @@ def _demucs_progress(info: dict, shifts: int) -> int:
     return max(0, min(99, int(completed_units / total_units * 100)))
 
 
+DEFAULT_DEMUCS_MODEL = "htdemucs_ft"
+DEFAULT_DEMUCS_SHIFTS = 1
+
+
 def separate_audio(
     video_file: Path,
     session: Path,
     progress_callback: Callable[[int, str], None] | None = None,
+    demucs_model: str | None = None,
+    shifts: int | None = None,
 ) -> tuple[Path, Path]:
     demucs_path = _demucs_source_path()
     sys.path.insert(0, str(demucs_path))
@@ -40,7 +46,8 @@ def separate_audio(
     if vocals_file.exists() and bgm_file.exists():
         return vocals_file, bgm_file
 
-    shifts = 3
+    model_name = demucs_model or DEFAULT_DEMUCS_MODEL
+    shifts = shifts if shifts is not None else DEFAULT_DEMUCS_SHIFTS
 
     def report_progress(info: dict) -> None:
         if progress_callback is None:
@@ -49,7 +56,7 @@ def separate_audio(
         progress_callback(progress, f"Separating audio {progress}%")
 
     separator = Separator(
-        model="htdemucs_ft",
+        model=model_name,
         device=_device(),
         progress=True,
         shifts=shifts,

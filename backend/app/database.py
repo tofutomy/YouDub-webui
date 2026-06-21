@@ -126,6 +126,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN translate_provider_id TEXT")
         if "stop_after_translate" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN stop_after_translate INTEGER DEFAULT 0")
+        if "demucs_model" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN demucs_model TEXT")
+        if "demucs_shifts" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN demucs_shifts INTEGER DEFAULT 1")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -370,16 +374,18 @@ def create_task(
     tts_mode: str | None = None,
     translate_provider_id: str | None = None,
     stop_after_translate: bool = False,
+    demucs_model: str | None = None,
+    demucs_shifts: int = 1,
 ) -> str:
     new_id = task_id or str(uuid.uuid4())
     created_at = now_iso()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate)
-            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate, demucs_model, demucs_shifts)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate)),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate), demucs_model, demucs_shifts),
         )
         conn.executemany(
             """

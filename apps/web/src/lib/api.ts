@@ -46,6 +46,8 @@ export type Task = {
   tts_mode: string | null
   translate_provider_id: string | null
   stop_after_translate: number | null
+  demucs_model: string | null
+  demucs_shifts: number | null
 }
 
 export type CookieInfo = {
@@ -99,6 +101,8 @@ export type StageConfig = {
   tts_mode: string
   translate_provider_id: string
   stop_after_translate: boolean
+  demucs_model: string
+  demucs_shifts: number
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

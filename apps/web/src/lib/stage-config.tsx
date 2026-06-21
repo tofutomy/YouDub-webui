@@ -5,6 +5,7 @@ import type { StageConfig, Task, TranslateProvider } from "@/lib/api"
 import {
   AsrModelSelect,
   DirectionSelect,
+  SeparateModeSelect,
   TranslateModeSelect,
   TranslateProviderSelect,
   ValidateTranslationCheckbox,
@@ -26,6 +27,8 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   stop_after_translate: false,
   tts_mode: "controllable_clone",
   translate_provider_id: "",
+  demucs_model: "",
+  demucs_shifts: 1,
 }
 
 export function configFromTask(task: Task): StageConfig {
@@ -41,6 +44,8 @@ export function configFromTask(task: Task): StageConfig {
     stop_after_translate: task.stop_after_translate === 1,
     tts_mode: task.tts_mode || "controllable_clone",
     translate_provider_id: task.translate_provider_id || "",
+    demucs_model: task.demucs_model || "",
+    demucs_shifts: task.demucs_shifts ?? 1,
   }
 }
 
@@ -73,6 +78,17 @@ export interface StageFieldDef {
 }
 
 export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
+  separate: [
+    {
+      keys: ["demucs_model", "demucs_shifts"],
+      render: ({ config, onChange }) => (
+        <SeparateModeSelect
+          demucs_shifts={config.demucs_shifts}
+          onChange={onChange}
+        />
+      ),
+    },
+  ],
   asr: [
     {
       keys: ["asr_model"],

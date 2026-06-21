@@ -79,6 +79,11 @@ const messages: Record<UiLanguage, Messages> = {
       empty: "No tasks yet. Submit a URL, upload a file, or enter a local path above to start.",
       loadError: "Failed to load tasks",
       createError: "Failed to create task",
+      separateModeLabel: "Separation mode",
+      separateModeBalanced: "Balanced (default)",
+      separateModeHighQuality: "High quality",
+      separateModeBalancedDesc: "Fast 3x speed with minimal quality loss (shifts=1).",
+      separateModeHighQualityDesc: "Best audio quality, slower processing (shifts=3).",
     },
     task: {
       overview: "Task overview",
@@ -260,6 +265,11 @@ const messages: Record<UiLanguage, Messages> = {
       empty: "暂无任务。输入链接、上传文件或输入本地路径后即可开始。",
       loadError: "加载任务失败",
       createError: "创建任务失败",
+      separateModeLabel: "分离模式",
+      separateModeBalanced: "均衡（默认）",
+      separateModeHighQuality: "高精度",
+      separateModeBalancedDesc: "速度快 3 倍，音质损失极小（shifts=1）。",
+      separateModeHighQualityDesc: "最佳音质，处理较慢（shifts=3）。",
     },
     task: {
       overview: "任务概览",

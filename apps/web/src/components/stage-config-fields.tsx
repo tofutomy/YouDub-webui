@@ -191,6 +191,46 @@ export function AddSubtitlesCheckbox({ checked, onChange }: AddSubtitlesCheckbox
   )
 }
 
+/* ── Separate Mode Select ── */
+
+interface SeparateModeSelectProps {
+  id?: string
+  demucs_shifts: number
+  onChange: (patch: { demucs_model?: string; demucs_shifts?: number }) => void
+}
+
+export function SeparateModeSelect({ id = "separate-mode", demucs_shifts, onChange }: SeparateModeSelectProps) {
+  const { t } = useI18n()
+  // Map current config to preset value for the UI
+  const preset = demucs_shifts >= 3 ? "high_quality" : "balanced"
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{t.home.separateModeLabel}</Label>
+      <Select
+        value={preset}
+        onValueChange={(v) => {
+          if (v === "high_quality") {
+            onChange({ demucs_model: "", demucs_shifts: 3 })
+          } else {
+            onChange({ demucs_model: "", demucs_shifts: 1 })
+          }
+        }}
+      >
+        <SelectTrigger id={id} className="h-10">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="balanced">{t.home.separateModeBalanced}</SelectItem>
+          <SelectItem value="high_quality">{t.home.separateModeHighQuality}</SelectItem>
+        </SelectContent>
+      </Select>
+      <p className="text-xs text-muted-foreground">
+        {preset === "high_quality" ? t.home.separateModeHighQualityDesc : t.home.separateModeBalancedDesc}
+      </p>
+    </div>
+  )
+}
+
 /* ── Translate Provider Select ── */
 
 interface TranslateProviderOption {

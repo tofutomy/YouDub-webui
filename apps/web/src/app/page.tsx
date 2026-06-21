@@ -35,7 +35,7 @@ import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 
-const CREATE_SECTION_STAGES = ["translate", "asr", "tts", "merge_video"] as const
+const CREATE_SECTION_STAGES = ["separate", "translate", "asr", "tts", "merge_video"] as const
 
 function isActive(status: string) {
   return status === "queued" || status === "running"
@@ -146,6 +146,7 @@ export default function Home() {
   const canSubmit = Boolean((hasUrl || hasLocalFile || hasLocalPath) && !submitting)
 
   const sectionLabelKey: Record<string, string> = {
+    separate: t.home.separateModeLabel,
     translate: t.home.groupTranslate,
     asr: t.home.groupAsr,
     tts: t.home.groupTts,

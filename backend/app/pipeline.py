@@ -316,15 +316,21 @@ class PipelineRunner:
         database.update_task(self.task_id, session_path=str(session), title=title)
         self.stage_message("download", f"[{source.name}] {title or 'Downloaded'} -> {session}")
 
-    def _separate(self, _: dict) -> None:
+    def _separate(self, task: dict) -> None:
         from .adapters.demucs import separate_audio
 
         session = _require(self.artifacts.session, "session")
         video_file = _require(self.artifacts.video_file, "video_file")
+        demucs_model = task.get("demucs_model") or None
+        demucs_shifts = task.get("demucs_shifts")
+        if demucs_shifts is not None:
+            demucs_shifts = int(demucs_shifts)
         self.artifacts.vocals_file, self.artifacts.bgm_file = separate_audio(
             video_file,
             session,
             progress_callback=lambda progress, message: self.stage_progress("separate", progress, message),
+            demucs_model=demucs_model,
+            shifts=demucs_shifts,
         )
         self.stage_message("separate", f"Vocals: {self.artifacts.vocals_file.name}, BGM: {self.artifacts.bgm_file.name}")
 

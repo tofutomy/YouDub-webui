@@ -117,6 +117,28 @@ export function ValidateTranslationCheckbox({ checked, onChange }: ValidateTrans
   )
 }
 
+/* ── Stop After Translate Checkbox ── */
+
+interface StopAfterTranslateCheckboxProps {
+  checked: boolean
+  onChange: (checked: boolean) => void
+}
+
+export function StopAfterTranslateCheckbox({ checked, onChange }: StopAfterTranslateCheckboxProps) {
+  const { t } = useI18n()
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="size-4 rounded border-gray-300"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {t.home.stopAfterTranslate}
+    </label>
+  )
+}
+
 /* ── TTS Mode Select ── */
 
 interface TtsModeSelectProps {

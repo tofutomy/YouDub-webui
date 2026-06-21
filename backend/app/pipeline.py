@@ -87,11 +87,24 @@ class PipelineRunner:
             self.log(f"Device plan: {device_plan_summary()}")
             for stage in STAGES:
                 self._run_stage(stage.name)
+                # Stop after translate if configured (subtitles-only mode).
+                if stage.name == "translate":
+                    task = database.get_task(self.task_id)
+                    if task and task.get("stop_after_translate"):
+                        database.update_task(
+                            self.task_id,
+                            status="succeeded",
+                            current_stage="translate",
+                            completed_at=database.now_iso(),
+                        )
+                        self.log("Pipeline stopped after translate (stop_after_translate enabled)")
+                        return
+            final_video = str(self.artifacts.final_video) if self.artifacts.final_video else None
             database.update_task(
                 self.task_id,
                 status="succeeded",
                 current_stage="done",
-                final_video_path=str(_require(self.artifacts.final_video, "final_video")),
+                final_video_path=final_video,
                 completed_at=database.now_iso(),
             )
             self.log("Task succeeded")

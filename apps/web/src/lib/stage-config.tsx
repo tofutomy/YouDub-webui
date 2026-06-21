@@ -8,6 +8,7 @@ import {
   TranslateModeSelect,
   TranslateProviderSelect,
   ValidateTranslationCheckbox,
+  StopAfterTranslateCheckbox,
   TtsModeSelect,
   AddSubtitlesCheckbox,
 } from "@/components/stage-config-fields"
@@ -22,6 +23,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   add_subtitles: true,
   translate_mode: "sentence",
   validate_translation: false,
+  stop_after_translate: false,
   tts_mode: "controllable_clone",
   translate_provider_id: "",
 }
@@ -36,6 +38,7 @@ export function configFromTask(task: Task): StageConfig {
     add_subtitles: task.add_subtitles !== 0,
     translate_mode: task.translate_mode || "sentence",
     validate_translation: task.validate_translation === 1,
+    stop_after_translate: task.stop_after_translate === 1,
     tts_mode: task.tts_mode || "controllable_clone",
     translate_provider_id: task.translate_provider_id || "",
   }
@@ -118,6 +121,15 @@ export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
         <ValidateTranslationCheckbox
           checked={config.validate_translation}
           onChange={(v) => onChange({ validate_translation: v })}
+        />
+      ),
+    },
+    {
+      keys: ["stop_after_translate"],
+      render: ({ config, onChange }) => (
+        <StopAfterTranslateCheckbox
+          checked={config.stop_after_translate}
+          onChange={(v) => onChange({ stop_after_translate: v })}
         />
       ),
     },

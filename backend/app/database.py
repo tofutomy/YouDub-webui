@@ -124,6 +124,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN tts_mode TEXT")
         if "translate_provider_id" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN translate_provider_id TEXT")
+        if "stop_after_translate" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN stop_after_translate INTEGER DEFAULT 0")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -367,16 +369,17 @@ def create_task(
     validate_translation: bool = False,
     tts_mode: str | None = None,
     translate_provider_id: str | None = None,
+    stop_after_translate: bool = False,
 ) -> str:
     new_id = task_id or str(uuid.uuid4())
     created_at = now_iso()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id)
-            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate)),
         )
         conn.executemany(
             """

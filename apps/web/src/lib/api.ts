@@ -45,6 +45,7 @@ export type Task = {
   validate_translation: number | null
   tts_mode: string | null
   translate_provider_id: string | null
+  stop_after_translate: number | null
 }
 
 export type CookieInfo = {
@@ -97,6 +98,7 @@ export type StageConfig = {
   validate_translation: boolean
   tts_mode: string
   translate_provider_id: string
+  stop_after_translate: boolean
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {

@@ -42,6 +42,24 @@ class TaskCreate(BaseModel):
     translate_mode: str | None = None
     validate_translation: bool = False
     tts_mode: str | None = None
+    translate_provider_id: str | None = None
+
+
+class TranslateProviderCreate(BaseModel):
+    name: str
+    base_url: str = ""
+    api_key: str = ""
+    model: str = ""
+    is_default: bool = False
+
+
+class TranslateProviderUpdate(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str = ""
+    clear_api_key: bool = False
+    model: str | None = None
+    is_default: bool | None = None
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -190,6 +208,8 @@ def create_task(payload: TaskCreate) -> dict:
             fields["validate_translation"] = int(payload.validate_translation)
         if payload.tts_mode is not None:
             fields["tts_mode"] = payload.tts_mode or None
+        if payload.translate_provider_id is not None:
+            fields["translate_provider_id"] = payload.translate_provider_id or None
         if fields:
             database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
@@ -205,6 +225,7 @@ def create_task(payload: TaskCreate) -> dict:
         translate_mode=payload.translate_mode,
         validate_translation=payload.validate_translation,
         tts_mode=payload.tts_mode,
+        translate_provider_id=payload.translate_provider_id,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -248,6 +269,7 @@ def upload_local_video(
     translate_mode: str = Form(""),
     validate_translation: bool = Form(False),
     tts_mode: str = Form(""),
+    translate_provider_id: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
@@ -277,6 +299,7 @@ def upload_local_video(
         translate_mode=translate_mode or None,
         validate_translation=validate_translation,
         tts_mode=tts_mode or None,
+        translate_provider_id=translate_provider_id or None,
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -296,6 +319,7 @@ class TaskConfigUpdate(BaseModel):
     translate_mode: str | None = None
     validate_translation: bool | None = None
     tts_mode: str | None = None
+    translate_provider_id: str | None = None
 
 
 def _payload_has_field(payload: BaseModel, field: str) -> bool:
@@ -327,6 +351,8 @@ def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
         fields["validate_translation"] = int(payload.validate_translation)
     if _payload_has_field(payload, "tts_mode"):
         fields["tts_mode"] = payload.tts_mode or None
+    if _payload_has_field(payload, "translate_provider_id"):
+        fields["translate_provider_id"] = payload.translate_provider_id or None
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)
@@ -397,6 +423,7 @@ def rerun_task(task_id: str) -> dict:
         "translate_mode": task.get("translate_mode"),
         "validate_translation": task.get("validate_translation") == 1,
         "tts_mode": task.get("tts_mode"),
+        "translate_provider_id": task.get("translate_provider_id"),
     }
     _purge_task(task)
     new_id = database.create_task(url, task_id=task_id, **preserved_config)
@@ -617,6 +644,89 @@ def get_openai_models(payload: OpenAIModelsRequest) -> dict:
     settings = database.get_openai_settings()
     base_url = payload.base_url.strip() or settings["base_url"]
     api_key = payload.api_key.strip() or settings["api_key"]
+    try:
+        models = list_openai_models(base_url=base_url, api_key=api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch models: {exc}") from exc
+    return {"models": models}
+
+
+# ---------------------------------------------------------------------------
+# Translate Providers API
+# ---------------------------------------------------------------------------
+
+def _serialize_provider(p: dict) -> dict:
+    return {
+        "id": p["id"],
+        "name": p["name"],
+        "base_url": p["base_url"],
+        "api_key": p["api_key"],
+        "has_api_key": bool(p["api_key"]),
+        "model": p["model"],
+        "is_default": bool(p["is_default"]),
+        "created_at": p["created_at"],
+        "updated_at": p["updated_at"],
+    }
+
+
+@app.get("/api/translate-providers")
+def list_translate_providers() -> dict:
+    providers = database.list_translate_providers()
+    return {"providers": [_serialize_provider(p) for p in providers]}
+
+
+@app.post("/api/translate-providers", status_code=201)
+def create_translate_provider(payload: TranslateProviderCreate) -> dict:
+    provider_id = database.create_translate_provider(
+        name=payload.name,
+        base_url=payload.base_url,
+        api_key=payload.api_key,
+        model=payload.model,
+        is_default=payload.is_default,
+    )
+    return _serialize_provider(database.get_translate_provider(provider_id))
+
+
+@app.patch("/api/translate-providers/{provider_id}")
+def update_translate_provider(provider_id: str, payload: TranslateProviderUpdate) -> dict:
+    provider = database.get_translate_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    try:
+        database.update_translate_provider(
+            provider_id,
+            name=payload.name,
+            base_url=payload.base_url,
+            api_key=payload.api_key,
+            clear_api_key=payload.clear_api_key,
+            model=payload.model,
+            is_default=payload.is_default,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _serialize_provider(database.get_translate_provider(provider_id))
+
+
+@app.delete("/api/translate-providers/{provider_id}", status_code=204)
+def delete_translate_provider(provider_id: str) -> Response:
+    if not database.delete_translate_provider(provider_id):
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    return Response(status_code=204)
+
+
+@app.post("/api/translate-providers/{provider_id}/models")
+def list_translate_provider_models(provider_id: str) -> dict:
+    provider = database.get_translate_provider(provider_id)
+    if not provider:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    base_url = provider["base_url"]
+    api_key = provider["api_key"]
+    if not base_url:
+        settings = database.get_openai_settings()
+        base_url = settings["base_url"]
+        api_key = api_key or settings["api_key"]
     try:
         models = list_openai_models(base_url=base_url, api_key=api_key)
     except ValueError as exc:

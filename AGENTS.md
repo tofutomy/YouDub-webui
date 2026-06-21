@@ -7,7 +7,7 @@
 | 用途 | 命令 |
 |------|------|
 | 启动后端 | `.\.venv\Scripts\uvicorn.exe backend.app.main:app --reload --host 0.0.0.0 --port 8000` |
-| 启动前端 | `npm.cmd --prefix apps/web run dev -- --hostname 0.0.0.0 --port 3000` |
+| 启动前端 | `npm.cmd --prefix apps/web run dev -- --hostname 0.0.0.0 --port 3080` |
 | 运行后端测试 | `.\.venv\Scripts\python.exe -m pytest backend\tests` |
 | Lint 前端 | `npm.cmd --prefix apps/web run lint` |
 | CLI 跑 pipeline | `.\.venv\Scripts\python.exe scripts\run_pipeline.py <url>` |
@@ -28,7 +28,7 @@ yt-dlp / demucs / whisper / funasr / funasr-vllm / openai / voxcpm / ffmpeg
 
 - **前端 -> 后端**：`next.config.ts` 中 rewrite `/api/:path*` 到后端地址。默认代理到 `127.0.0.1:8000`。可通过 `NEXT_PUBLIC_API_BASE_URL`（客户端+服务端）或 `NEXT_SERVER_API_BASE_URL`（仅服务端）覆盖。
 - **Worker**：单线程串行处理任务，不支持并行。启动时会将 `queued/running` 任务标记为 `failed`（后端重启前未完成）。
-- **数据库**：SQLite（`data/youdub.sqlite`），3 张表：`tasks`、`task_stages`、`settings`。数据库 schema 会自动迁移新增的列。
+- **数据库**：SQLite（`data/youdub.sqlite`），4 张表：`tasks`、`task_stages`、`settings`、`translate_providers`。数据库 schema 会自动迁移新增的列。
 - **上传**：支持本地视频上传（`.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`），默认最大 4GB，上传到 `WORKFOLDER/_uploads/`，自动转码为 h.264+aac MP4。
 
 ## 处理 Pipeline（9 阶段）
@@ -131,6 +131,11 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 | POST | `/api/settings/openai/models` | 列出可用的 OpenAI 模型 |
 | GET/POST | `/api/settings/ytdlp` | yt-dlp 代理设置 |
 | GET/POST | `/api/settings/funasr` | FunASR vLLM 引擎设置（use_vllm: auto/on/off） |
+| GET | `/api/translate-providers` | 列出所有翻译提供商 |
+| POST | `/api/translate-providers` | 创建翻译提供商 |
+| PATCH | `/api/translate-providers/{id}` | 更新翻译提供商 |
+| DELETE | `/api/translate-providers/{id}` | 删除翻译提供商 |
+| POST | `/api/translate-providers/{id}/models` | 列出该提供商的可用模型 |
 | GET | `/api/health` | 健康检查 |
 
 ## 语言方向规则
@@ -296,6 +301,8 @@ FUNASR_REMOTE_HOTWORDS=
 | `OPENAI_API_KEY` | (空) | API 密钥 |
 | `OPENAI_MODEL` | `gpt-4o-mini` | 翻译模型（也接受 `OPENAI_MODEL_NAME`） |
 | `OPENAI_TRANSLATE_CONCURRENCY` | `50` | 翻译并发请求数 |
+
+> **注意**：`.env` 中的 `OPENAI_*` 值仅在首次启动（`translate_providers` 表为空时）用于创建默认提供商。后续修改 `.env` 不会覆盖已有的提供商配置，请通过前端设置弹窗或 API 管理。
 
 ### 上传与 CORS
 

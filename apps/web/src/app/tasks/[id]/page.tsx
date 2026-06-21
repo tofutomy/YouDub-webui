@@ -21,12 +21,14 @@ import {
 import {
   StageStatus,
   Task,
+  TranslateProvider,
   clearStageOutput,
   deleteTask,
   finalVideoDownloadUrl,
   finalVideoUrl,
   getTask,
   getTaskLog,
+  getTranslateProviders,
   rerunSingleStage,
   rerunStage,
   rerunTask,
@@ -41,6 +43,7 @@ import {
   AsrModelSelect,
   DirectionSelect,
   TranslateModeSelect,
+  TranslateProviderSelect,
   ValidateTranslationCheckbox,
   TtsModeSelect,
   AddSubtitlesCheckbox,
@@ -140,6 +143,8 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [cfgTranslateMode, setCfgTranslateMode] = useState("sentence")
   const [cfgValidateTranslation, setCfgValidateTranslation] = useState(false)
   const [cfgTtsMode, setCfgTtsMode] = useState("controllable_clone")
+  const [cfgTranslateProvider, setCfgTranslateProvider] = useState("")
+  const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -249,6 +254,13 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
       setCfgTranslateMode(task.translate_mode || "sentence")
       setCfgValidateTranslation(task.validate_translation === 1)
       setCfgTtsMode(task.tts_mode || "controllable_clone")
+      setCfgTranslateProvider(task.translate_provider_id || "")
+    }
+    // Load providers for translate stage config
+    if (stageName === "translate") {
+      getTranslateProviders()
+        .then((resp) => setProviderOptions(resp.providers))
+        .catch(() => setProviderOptions([]))
     }
   }
 
@@ -267,6 +279,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
         config.target_language = parts[1]
         config.translate_mode = cfgTranslateMode
         config.validate_translation = cfgValidateTranslation
+        config.translate_provider_id = cfgTranslateProvider || null
       } else if (configStageTarget === "merge_video") {
         config.add_subtitles = cfgAddSubtitles
       } else if (configStageTarget === "tts") {
@@ -703,6 +716,12 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 ) : null}
                 {configStageTarget === "translate" ? (
                   <div className="space-y-4">
+                    <TranslateProviderSelect
+                      id="cfg-translate-provider"
+                      value={cfgTranslateProvider}
+                      options={providerOptions}
+                      onChange={setCfgTranslateProvider}
+                    />
                     <DirectionSelect
                       id="cfg-direction"
                       value={cfgDirection}

@@ -167,3 +167,45 @@ export function AddSubtitlesCheckbox({ checked, onChange }: AddSubtitlesCheckbox
     </label>
   )
 }
+
+/* ── Translate Provider Select ── */
+
+interface TranslateProviderOption {
+  id: string
+  name: string
+  model: string
+  is_default: boolean
+}
+
+interface TranslateProviderSelectProps {
+  id?: string
+  value: string
+  options: TranslateProviderOption[]
+  onChange: (value: string) => void
+}
+
+export function TranslateProviderSelect({ id = "translate-provider", value, options, onChange }: TranslateProviderSelectProps) {
+  const { t } = useI18n()
+  const selected = options.find((p) => p.id === value)
+  const display = selected
+    ? `${selected.name} (${selected.model})${selected.is_default ? " ★" : ""}`
+    : value || t.home.translateProviderDefault
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{t.home.translateProviderLabel}</Label>
+      <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
+        <SelectTrigger id={id} className="h-10">
+          <SelectValue>{display}</SelectValue>
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="">{t.home.translateProviderDefault}</SelectItem>
+          {options.map((p) => (
+            <SelectItem key={p.id} value={p.id}>
+              {p.name} ({p.model}){p.is_default ? " ★" : ""}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  )
+}

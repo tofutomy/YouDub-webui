@@ -44,6 +44,7 @@ export type Task = {
   translate_mode: string | null
   validate_translation: number | null
   tts_mode: string | null
+  translate_provider_id: string | null
 }
 
 export type CookieInfo = {
@@ -71,6 +72,18 @@ export type YtdlpSettings = {
 
 export type FunasrSettings = {
   use_vllm: "auto" | "on" | "off"
+}
+
+export type TranslateProvider = {
+  id: string
+  name: string
+  base_url: string
+  api_key: string
+  has_api_key: boolean
+  model: string
+  is_default: boolean
+  created_at: string
+  updated_at: string
 }
 
 export type LocalDirection = "en-zh" | "zh-en"
@@ -159,6 +172,7 @@ export function updateTaskConfig(taskId: string, config: {
   translate_mode?: string | null
   validate_translation?: boolean
   tts_mode?: string | null
+  translate_provider_id?: string | null
 }) {
   return request<Task>(`/api/tasks/${taskId}/config`, {
     method: "PATCH",
@@ -170,7 +184,7 @@ export function clearStageOutput(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/clear-stage/${stageName}`, { method: "POST" })
 }
 
-export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string) {
+export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string, translateProviderId?: string) {
   const body: Record<string, unknown> = { url }
   if (direction) {
     const parts = direction.split("-")
@@ -192,13 +206,16 @@ export function createTask(url: string, direction?: LocalDirection, addSubtitles
   if (ttsMode) {
     body.tts_mode = ttsMode
   }
+  if (translateProviderId) {
+    body.translate_provider_id = translateProviderId
+  }
   return request<Task>("/api/tasks", {
     method: "POST",
     body: JSON.stringify(body),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string) {
+export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string, translateProviderId?: string) {
   const form = new FormData()
   form.append("direction", direction)
   if (addSubtitles !== undefined) {
@@ -215,6 +232,9 @@ export async function uploadLocalTask(file: File, direction: LocalDirection, add
   }
   if (ttsMode) {
     form.append("tts_mode", ttsMode)
+  }
+  if (translateProviderId) {
+    form.append("translate_provider_id", translateProviderId)
   }
   form.append("file", file)
 
@@ -287,6 +307,51 @@ export function saveFunasrSettings(settings: FunasrSettings) {
   return request<FunasrSettings>("/api/settings/funasr", {
     method: "POST",
     body: JSON.stringify(settings),
+  })
+}
+
+// ---------------------------------------------------------------------------
+// Translate Providers
+// ---------------------------------------------------------------------------
+
+export function getTranslateProviders() {
+  return request<{ providers: TranslateProvider[] }>("/api/translate-providers")
+}
+
+export function createTranslateProvider(provider: {
+  name: string
+  base_url?: string
+  api_key?: string
+  model?: string
+  is_default?: boolean
+}) {
+  return request<TranslateProvider>("/api/translate-providers", {
+    method: "POST",
+    body: JSON.stringify(provider),
+  })
+}
+
+export function updateTranslateProvider(id: string, provider: {
+  name?: string
+  base_url?: string
+  api_key?: string
+  clear_api_key?: boolean
+  model?: string
+  is_default?: boolean
+}) {
+  return request<TranslateProvider>(`/api/translate-providers/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(provider),
+  })
+}
+
+export function deleteTranslateProvider(id: string) {
+  return request<void>(`/api/translate-providers/${id}`, { method: "DELETE" })
+}
+
+export function getTranslateProviderModels(id: string) {
+  return request<{ models: string[] }>(`/api/translate-providers/${id}/models`, {
+    method: "POST",
   })
 }
 

@@ -7,7 +7,9 @@ import { ChevronRight, Play, Upload } from "lucide-react"
 
 import {
   TaskSummary,
+  TranslateProvider,
   createTask,
+  getTranslateProviders,
   listTasks,
   uploadLocalTask,
 } from "@/lib/api"
@@ -18,6 +20,7 @@ import {
   AsrModelSelect,
   DirectionSelect,
   TranslateModeSelect,
+  TranslateProviderSelect,
   ValidateTranslationCheckbox,
   TtsModeSelect,
   AddSubtitlesCheckbox,
@@ -68,6 +71,8 @@ export default function Home() {
   const [translateMode, setTranslateMode] = useState("sentence")
   const [validateTranslation, setValidateTranslation] = useState(false)
   const [ttsMode, setTtsMode] = useState("controllable_clone")
+  const [translateProvider, setTranslateProvider] = useState("")
+  const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -90,6 +95,9 @@ export default function Home() {
     }
 
     loadTasks()
+    getTranslateProviders()
+      .then((resp) => { if (!cancelled) setProviderOptions(resp.providers) })
+      .catch(() => {})
     const interval = window.setInterval(loadTasks, 2000)
     return () => {
       cancelled = true
@@ -110,8 +118,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-      ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode)
-      : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode)
+      ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode, translateProvider || undefined)
+      : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode, translateProvider || undefined)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -198,6 +206,12 @@ export default function Home() {
                 <ValidateTranslationCheckbox
                   checked={validateTranslation}
                   onChange={setValidateTranslation}
+                />
+                <TranslateProviderSelect
+                  id="translate-provider"
+                  value={translateProvider}
+                  options={providerOptions}
+                  onChange={setTranslateProvider}
                 />
               </div>
 

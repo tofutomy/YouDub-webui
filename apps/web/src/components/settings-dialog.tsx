@@ -1,18 +1,22 @@
 "use client"
 
 import { FormEvent, useEffect, useState } from "react"
-import { Eye, EyeOff, RefreshCw, Settings } from "lucide-react"
+import { Eye, EyeOff, Plus, RefreshCw, Settings, Trash2, ChevronDown, ChevronRight, Star } from "lucide-react"
 
 import {
+  TranslateProvider,
+  createTranslateProvider,
+  deleteTranslateProvider,
   getCookieInfo,
   getFunasrSettings,
-  getOpenAIModels,
-  getOpenAISettings,
+  getTranslateProviderModels,
+  getTranslateProviders,
   getYtdlpSettings,
   saveCookie,
   saveFunasrSettings,
   saveOpenAISettings,
   saveYtdlpSettings,
+  updateTranslateProvider,
 } from "@/lib/api"
 import { LANGUAGE_OPTIONS, useI18n } from "@/lib/i18n"
 import { Button } from "@/components/ui/button"
@@ -38,24 +42,33 @@ import { Textarea } from "@/components/ui/textarea"
 
 type SettingsForm = {
   cookie: string
-  baseUrl: string
-  apiKey: string
-  model: string
   translateConcurrency: string
   proxyPort: string
   useVllm: "auto" | "on" | "off"
 }
 
-const SAVED_API_KEY_MASK = "********"
+type ProviderForm = {
+  id: string | null  // null = new unsaved
+  name: string
+  baseUrl: string
+  apiKey: string
+  model: string
+  isDefault: boolean
+  hasApiKey: boolean
+  expanded: boolean
+  apiKeyDirty: boolean
+  showApiKey: boolean
+  modelsLoaded: boolean
+  modelsLoading: boolean
+  modelOptions: string[]
+}
+
 const SAVED_COOKIE_SENTINEL = "__YOUDUB_SAVED_COOKIE__"
 
 type MessageKey = "keySaved" | "saved"
 
 const defaultSettings: SettingsForm = {
   cookie: "",
-  baseUrl: "https://api.openai.com/v1",
-  apiKey: "",
-  model: "gpt-4o-mini",
   translateConcurrency: "50",
   useVllm: "auto",
   proxyPort: "",
@@ -65,44 +78,71 @@ function uniqueModels(models: string[]) {
   return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)))
 }
 
+function providerToForm(p: TranslateProvider): ProviderForm {
+  return {
+    id: p.id,
+    name: p.name,
+    baseUrl: p.base_url,
+    apiKey: p.api_key || "",
+    model: p.model,
+    isDefault: p.is_default,
+    hasApiKey: p.has_api_key,
+    expanded: false,
+    apiKeyDirty: false,
+    showApiKey: false,
+    modelsLoaded: false,
+    modelsLoading: false,
+    modelOptions: p.model ? [p.model] : [],
+  }
+}
+
+function newProviderForm(): ProviderForm {
+  return {
+    id: null,
+    name: "",
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    model: "",
+    isDefault: false,
+    hasApiKey: false,
+    expanded: true,
+    apiKeyDirty: false,
+    showApiKey: false,
+    modelsLoaded: false,
+    modelsLoading: false,
+    modelOptions: [],
+  }
+}
+
 export function SettingsDialog() {
   const { language, loadedModelsText, setLanguage, t } = useI18n()
   const [open, setOpen] = useState(false)
   const [settings, setSettings] = useState(defaultSettings)
+  const [providers, setProviders] = useState<ProviderForm[]>([])
   const [message, setMessage] = useState("")
   const [messageKey, setMessageKey] = useState<MessageKey | null>(null)
-  const [modelOptions, setModelOptions] = useState<string[]>([])
-  const [modelsLoaded, setModelsLoaded] = useState(false)
-  const [modelsLoading, setModelsLoading] = useState(false)
-  const [showApiKey, setShowApiKey] = useState(false)
   const [cookieDirty, setCookieDirty] = useState(false)
-  const [apiKeyDirty, setApiKeyDirty] = useState(false)
 
-  const cookieValue =
-    settings.cookie === SAVED_COOKIE_SENTINEL ? t.settings.savedCookie : settings.cookie
   const visibleMessage =
     messageKey === "keySaved" ? t.settings.keySaved : messageKey === "saved" ? t.settings.saved : message
 
+  const cookieValue =
+    settings.cookie === SAVED_COOKIE_SENTINEL ? t.settings.savedCookie : settings.cookie
+
   useEffect(() => {
     if (!open) return
-    Promise.all([getCookieInfo(), getOpenAISettings(), getYtdlpSettings(), getFunasrSettings()])
-      .then(([cookie, openai, ytdlp, funasr]) => {
+    Promise.all([getCookieInfo(), getTranslateProviders(), getYtdlpSettings(), getFunasrSettings()])
+      .then(([cookie, providersResp, ytdlp, funasr]) => {
         setSettings({
           cookie: cookie.exists ? SAVED_COOKIE_SENTINEL : "",
-          baseUrl: openai.base_url,
-          apiKey: openai.has_api_key ? openai.api_key || SAVED_API_KEY_MASK : "",
-          model: openai.model,
-          translateConcurrency: openai.translate_concurrency || "50",
+          translateConcurrency: "50",
           proxyPort: ytdlp.proxy_port,
           useVllm: (funasr.use_vllm as "auto" | "on" | "off") || "auto",
         })
-        setModelOptions(uniqueModels([openai.model]))
-        setModelsLoaded(false)
-        setShowApiKey(false)
+        setProviders(providersResp.providers.map(providerToForm))
         setCookieDirty(false)
-        setApiKeyDirty(false)
         setMessage("")
-        setMessageKey(openai.has_api_key ? "keySaved" : null)
+        setMessageKey(null)
       })
       .catch((err) => {
         setMessageKey(null)
@@ -110,58 +150,122 @@ export function SettingsDialog() {
       })
   }, [open])
 
+  function updateProvider(index: number, updates: Partial<ProviderForm>) {
+    setProviders((current) =>
+      current.map((p, i) => (i === index ? { ...p, ...updates } : p))
+    )
+  }
+
+  async function fetchProviderModels(index: number) {
+    const provider = providers[index]
+    updateProvider(index, { modelsLoading: true, modelsLoaded: false })
+    try {
+      const id = provider.id
+      if (!id) {
+        // New provider: use inline values
+        setMessage(t.settings.saveProviderFirst)
+        updateProvider(index, { modelsLoading: false })
+        return
+      }
+      const resp = await getTranslateProviderModels(id)
+      const models = uniqueModels([provider.model, ...resp.models])
+      updateProvider(index, {
+        modelOptions: models,
+        modelsLoaded: true,
+        modelsLoading: false,
+        model: provider.model || models[0] || "",
+      })
+      setMessage(models.length ? loadedModelsText(models.length) : t.settings.noModels)
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : t.settings.loadModelsError)
+      updateProvider(index, { modelsLoading: false })
+    }
+  }
+
+  async function saveProvider(index: number) {
+    const provider = providers[index]
+    try {
+      if (provider.id) {
+        // Update existing
+        const resp = await updateTranslateProvider(provider.id, {
+          name: provider.name,
+          base_url: provider.baseUrl,
+          api_key: provider.apiKeyDirty ? provider.apiKey : "",
+          clear_api_key: provider.apiKeyDirty && !provider.apiKey.trim(),
+          model: provider.model,
+          is_default: provider.isDefault,
+        })
+        updateProvider(index, {
+          id: resp.id,
+          hasApiKey: resp.has_api_key,
+          apiKey: resp.api_key || "",
+          apiKeyDirty: false,
+        })
+      } else {
+        // Create new
+        const resp = await createTranslateProvider({
+          name: provider.name || provider.model || "Untitled",
+          base_url: provider.baseUrl,
+          api_key: provider.apiKey,
+          model: provider.model,
+          is_default: provider.isDefault,
+        })
+        updateProvider(index, {
+          id: resp.id,
+          hasApiKey: resp.has_api_key,
+          apiKey: resp.api_key || "",
+          apiKeyDirty: false,
+          name: resp.name,
+        })
+      }
+    } catch (err) {
+      throw err
+    }
+  }
+
+  async function removeProvider(index: number) {
+    const provider = providers[index]
+    if (provider.id) {
+      await deleteTranslateProvider(provider.id)
+    }
+    setProviders((current) => current.filter((_, i) => i !== index))
+  }
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setMessage("")
     setMessageKey(null)
     try {
-      const cookie = cookieDirty ? await saveCookie(settings.cookie) : null
-      const clearApiKey = apiKeyDirty && !settings.apiKey.trim()
-      const openai = await saveOpenAISettings({
-        base_url: settings.baseUrl,
-        api_key: apiKeyDirty ? settings.apiKey : "",
-        clear_api_key: clearApiKey,
-        model: settings.model,
+      if (cookieDirty) {
+        await saveCookie(settings.cookie)
+      }
+      // Save all providers
+      for (let i = 0; i < providers.length; i++) {
+        await saveProvider(i)
+      }
+      // Save global translate concurrency
+      await saveOpenAISettings({
+        base_url: "",
+        api_key: "",
+        model: "",
         translate_concurrency: settings.translateConcurrency,
       })
-      const ytdlp = await saveYtdlpSettings({ proxy_port: settings.proxyPort })
-      const funasr = await saveFunasrSettings({ use_vllm: settings.useVllm })
+      await saveYtdlpSettings({ proxy_port: settings.proxyPort })
+      await saveFunasrSettings({ use_vllm: settings.useVllm })
+      // Reload providers to get fresh state
+      const providersResp = await getTranslateProviders()
+      setProviders(providersResp.providers.map(providerToForm))
       setMessageKey("saved")
       setSettings((current) => ({
         ...current,
-        apiKey: openai.has_api_key ? openai.api_key || SAVED_API_KEY_MASK : "",
-        cookie: cookieDirty ? (cookie?.exists ? SAVED_COOKIE_SENTINEL : "") : current.cookie,
-        translateConcurrency: openai.translate_concurrency || current.translateConcurrency,
-        proxyPort: ytdlp.proxy_port,
-        useVllm: (funasr.use_vllm as "auto" | "on" | "off") || "auto",
+        cookie: cookieDirty ? (SAVED_COOKIE_SENTINEL) : current.cookie,
+        proxyPort: settings.proxyPort,
+        useVllm: settings.useVllm,
       }))
       setCookieDirty(false)
-      setApiKeyDirty(false)
     } catch (err) {
       setMessageKey(null)
       setMessage(err instanceof Error ? err.message : t.settings.saveError)
-    }
-  }
-
-  async function fetchModels() {
-    setMessage("")
-    setMessageKey(null)
-    setModelsLoading(true)
-    try {
-      const response = await getOpenAIModels({
-        base_url: settings.baseUrl,
-        api_key: apiKeyDirty ? settings.apiKey : "",
-      })
-      const models = uniqueModels([settings.model, ...response.models])
-      setModelOptions(models)
-      setModelsLoaded(true)
-      setSettings((current) => ({ ...current, model: current.model || models[0] || "" }))
-      setMessage(models.length ? loadedModelsText(models.length) : t.settings.noModels)
-    } catch (err) {
-      setMessageKey(null)
-      setMessage(err instanceof Error ? err.message : t.settings.loadModelsError)
-    } finally {
-      setModelsLoading(false)
     }
   }
 
@@ -256,93 +360,159 @@ export function SettingsDialog() {
                 </Select>
                 <p className="text-xs text-muted-foreground">{t.settings.funasrUseVllmHelp}</p>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="baseUrl">{t.settings.baseUrl}</Label>
-                <Input
-                  id="baseUrl"
-                  value={settings.baseUrl}
-                  onChange={(event) =>
-                    setSettings((current) => ({ ...current, baseUrl: event.target.value }))
-                  }
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="apiKey">{t.settings.apiKey}</Label>
-                <div className="relative">
-                  <Input
-                    id="apiKey"
-                    type={showApiKey ? "text" : "password"}
-                    value={settings.apiKey}
-                    onFocus={(event) => {
-                      if (!apiKeyDirty && settings.apiKey === SAVED_API_KEY_MASK) {
-                        event.currentTarget.select()
-                      }
-                    }}
-                    onChange={(event) => {
-                      setApiKeyDirty(true)
-                      setSettings((current) => ({
-                        ...current,
-                        apiKey: event.target.value.replace(SAVED_API_KEY_MASK, ""),
-                      }))
-                    }}
-                    placeholder={t.settings.apiKeyPlaceholder}
-                    className="pr-9"
-                  />
+
+              {/* ── Translate Providers ── */}
+              <div className="grid gap-3">
+                <div className="flex items-center justify-between">
+                  <Label>{t.settings.translateProviders}</Label>
                   <Button
                     type="button"
-                    variant="ghost"
-                    size="icon-sm"
-                    className="absolute top-0.5 right-0.5"
-                    onClick={() => setShowApiKey((current) => !current)}
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setProviders((current) => [...current, newProviderForm()])}
                   >
-                    {showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                    <span className="sr-only">{showApiKey ? t.settings.hideApiKey : t.settings.showApiKey}</span>
+                    <Plus className="size-3" />
+                    {t.settings.addProvider}
                   </Button>
                 </div>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
-                <div className="grid gap-2">
-                  <Label htmlFor="model">{t.settings.model}</Label>
-                  {modelsLoaded && modelOptions.length > 0 ? (
-                    <Select
-                      value={settings.model}
-                      onValueChange={(value) =>
-                        setSettings((current) => ({ ...current, model: value || "" }))
-                      }
+                {providers.length === 0 && (
+                  <p className="text-xs text-muted-foreground">{t.settings.noProviders}</p>
+                )}
+                {providers.map((provider, index) => (
+                  <div key={provider.id ?? `new-${index}`} className="rounded-lg border">
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
+                      onClick={() => updateProvider(index, { expanded: !provider.expanded })}
                     >
-                      <SelectTrigger id="model">
-                        <SelectValue placeholder={t.settings.selectModel} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {modelOptions.map((model) => (
-                          <SelectItem key={model} value={model}>
-                            {model}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  ) : (
-                    <Input
-                      id="model"
-                      value={settings.model}
-                      onChange={(event) =>
-                        setSettings((current) => ({ ...current, model: event.target.value }))
-                      }
-                    />
-                  )}
-                </div>
-                <div className="grid gap-2 sm:self-end">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={fetchModels}
-                    disabled={modelsLoading || !settings.baseUrl.trim()}
-                  >
-                    <RefreshCw className="size-4" />
-                    {modelsLoading ? t.settings.loading : t.settings.getModels}
-                  </Button>
-                </div>
+                      {provider.expanded ? <ChevronDown className="size-4" /> : <ChevronRight className="size-4" />}
+                      <span className="flex-1 font-medium truncate">
+                        {provider.name || t.settings.unnamedProvider}
+                      </span>
+                      <span className="text-muted-foreground truncate">{provider.model}</span>
+                      {provider.isDefault && (
+                        <Star className="size-3 fill-yellow-400 text-yellow-400" />
+                      )}
+                    </button>
+                    {provider.expanded && (
+                      <div className="grid gap-3 border-t px-3 py-3">
+                        <div className="grid gap-2">
+                          <Label>{t.settings.providerName}</Label>
+                          <Input
+                            value={provider.name}
+                            onChange={(e) => updateProvider(index, { name: e.target.value })}
+                            placeholder={t.settings.providerNamePlaceholder}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>{t.settings.baseUrl}</Label>
+                          <Input
+                            value={provider.baseUrl}
+                            onChange={(e) => updateProvider(index, { baseUrl: e.target.value })}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>{t.settings.apiKey}</Label>
+                          <div className="relative">
+                            <Input
+                              key={`provider-key-${index}-${provider.showApiKey}`}
+                              type={provider.showApiKey ? "text" : "password"}
+                              value={provider.apiKey}
+                              onFocus={(event) => {
+                                if (!provider.apiKeyDirty) {
+                                  event.currentTarget.select()
+                                }
+                              }}
+                              onChange={(event) => {
+                                updateProvider(index, {
+                                  apiKeyDirty: true,
+                                  apiKey: event.target.value,
+                                })
+                              }}
+                              placeholder={t.settings.apiKeyPlaceholder}
+                              className="pr-9"
+                            />
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="absolute top-0.5 right-0.5"
+                              onClick={() => updateProvider(index, { showApiKey: !provider.showApiKey })}
+                            >
+                              {provider.showApiKey ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                          <div className="grid gap-2">
+                            <Label>{t.settings.model}</Label>
+                            {provider.modelsLoaded && provider.modelOptions.length > 0 ? (
+                              <Select
+                                value={provider.model}
+                                onValueChange={(value) => updateProvider(index, { model: value || "" })}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder={t.settings.selectModel} />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {provider.modelOptions.map((m) => (
+                                    <SelectItem key={m} value={m}>{m}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <Input
+                                value={provider.model}
+                                onChange={(e) => updateProvider(index, { model: e.target.value })}
+                              />
+                            )}
+                          </div>
+                          <div className="grid gap-2 sm:self-end">
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={() => fetchProviderModels(index)}
+                              disabled={provider.modelsLoading || !provider.baseUrl.trim()}
+                            >
+                              <RefreshCw className="size-4" />
+                              {provider.modelsLoading ? t.settings.loading : t.settings.getModels}
+                            </Button>
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <label className="flex cursor-pointer items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              className="size-4 rounded border-gray-300"
+                              checked={provider.isDefault}
+                              onChange={(e) => {
+                                const checked = e.target.checked
+                                setProviders((current) =>
+                                  current.map((p, i) => ({
+                                    ...p,
+                                    isDefault: i === index ? checked : (checked ? false : p.isDefault),
+                                  }))
+                                )
+                              }}
+                            />
+                            {t.settings.setDefaultProvider}
+                          </label>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => removeProvider(index)}
+                          >
+                            <Trash2 className="size-3" />
+                            {t.settings.deleteProvider}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
+
               <div className="grid gap-2">
                 <Label htmlFor="translateConcurrency">{t.settings.translateConcurrency}</Label>
                 <Input

@@ -249,11 +249,17 @@ def _split_long_chunk(chunk: str) -> list[str]:
 def _split_text_to_sentences(text: str) -> list[str]:
     chunks: list[str] = []
     current: list[str] = []
-    for char in _clean_asr_text(text):
+    cleaned = _clean_asr_text(text)
+    for i, char in enumerate(cleaned):
         if char.isspace() and not current:
             continue
         current.append(char)
         if _SENTENCE_PUNCTUATION.match(char):
+            # Don't treat '.' as sentence-ending if it's a decimal point
+            # (e.g. "4.5" or "3.14") to avoid incorrect splitting.
+            if char == "." and i > 0 and i + 1 < len(cleaned):
+                if cleaned[i - 1].isdigit() and cleaned[i + 1].isdigit():
+                    continue
             chunk = "".join(current).strip()
             if chunk:
                 chunks.extend(_split_long_chunk(chunk))
@@ -561,7 +567,7 @@ def _group_chars_to_sentences(text: str, timestamps: list[dict]) -> list[dict]:
         cur_start = None
         cur_end = 0.0
 
-    for ch in text:
+    for i, ch in enumerate(text):
         if ch.isspace():
             if cur_chars and not cur_chars[-1].isspace():
                 cur_chars.append(" ")
@@ -579,6 +585,11 @@ def _group_chars_to_sentences(text: str, timestamps: list[dict]) -> list[dict]:
         cur_end = c_end
         cur_chars.append(ch)
         if _SENTENCE_PUNCTUATION.match(ch):
+            # Don't treat '.' as sentence-ending if it's a decimal point
+            # (e.g. "4.5" or "3.14") to avoid incorrect splitting.
+            if ch == "." and i > 0 and i + 1 < len(text):
+                if text[i - 1].isdigit() and text[i + 1].isdigit():
+                    continue
             _emit()
     _emit()  # trailing chunk without sentence punctuation
     return sentences

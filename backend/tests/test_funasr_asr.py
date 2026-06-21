@@ -14,6 +14,7 @@ from backend.app.adapters.funasr_asr import (
     _convert_vllm_result,
     _group_chars_to_sentences,
     _is_llm_based_model,
+    _split_text_to_sentences,
     _load_standard_model,
     _load_vllm_model,
     _resolve_vllm_mode,
@@ -478,6 +479,76 @@ def test_group_chars_to_sentences_inherits_last_timestamp() -> None:
     assert len(sentences) == 1
     assert sentences[0]["start_time"] == 0
     assert sentences[0]["end_time"] == 1000  # last known end
+
+
+# ---------------------------------------------------------------------------
+# Decimal-point preservation in sentence splitting
+# ---------------------------------------------------------------------------
+
+
+def test_group_chars_to_sentences_preserves_decimal() -> None:
+    """Digits like 4.5 should NOT be split into two sentences."""
+    text = "The value is 4.5 meters."
+    timestamps = [
+        {"token": "T", "start_time": 0.0, "end_time": 0.1},
+        {"token": "h", "start_time": 0.1, "end_time": 0.2},
+        {"token": "e", "start_time": 0.2, "end_time": 0.3},
+        {"token": " ", "start_time": 0.3, "end_time": 0.4},
+        {"token": "v", "start_time": 0.4, "end_time": 0.5},
+        {"token": "a", "start_time": 0.5, "end_time": 0.6},
+        {"token": "l", "start_time": 0.6, "end_time": 0.7},
+        {"token": "u", "start_time": 0.7, "end_time": 0.8},
+        {"token": "e", "start_time": 0.8, "end_time": 0.9},
+        {"token": " ", "start_time": 0.9, "end_time": 1.0},
+        {"token": "i", "start_time": 1.0, "end_time": 1.1},
+        {"token": "s", "start_time": 1.1, "end_time": 1.2},
+        {"token": " ", "start_time": 1.2, "end_time": 1.3},
+        {"token": "4", "start_time": 1.3, "end_time": 1.4},
+        {"token": ".", "start_time": 1.4, "end_time": 1.5},
+        {"token": "5", "start_time": 1.5, "end_time": 1.6},
+        {"token": " ", "start_time": 1.6, "end_time": 1.7},
+        {"token": "m", "start_time": 1.7, "end_time": 1.8},
+        {"token": "e", "start_time": 1.8, "end_time": 1.9},
+        {"token": "t", "start_time": 1.9, "end_time": 2.0},
+        {"token": "e", "start_time": 2.0, "end_time": 2.1},
+        {"token": "r", "start_time": 2.1, "end_time": 2.2},
+        {"token": "s", "start_time": 2.2, "end_time": 2.3},
+        {"token": ".", "start_time": 2.3, "end_time": 2.4},
+    ]
+    sentences = _group_chars_to_sentences(text, timestamps)
+    # The decimal "." in "4.5" is correctly preserved — only 1 sentence.
+    assert len(sentences) == 1
+    assert sentences[0]["text"] == "The value is 4.5 meters."
+
+
+def test_group_chars_to_sentences_preserves_pi() -> None:
+    """3.14 should not be split."""
+    text = "Pi is 3.14. Next."
+    timestamps = [
+        {"token": ch, "start_time": i * 0.1, "end_time": (i + 1) * 0.1}
+        for i, ch in enumerate(text)
+    ]
+    sentences = _group_chars_to_sentences(text, timestamps)
+    texts = [s["text"] for s in sentences]
+    # "3.14." — the decimal "." is preserved, the trailing "." after "14" is
+    # the real sentence boundary, so "3.14." ends up in the first sentence.
+    assert texts[0] == "Pi is 3.14."
+    assert texts[1] == "Next."
+
+
+def test_split_text_to_sentences_preserves_decimal() -> None:
+    """_split_text_to_sentences must not split on decimal points."""
+    result = _split_text_to_sentences("The value is 4.5 meters.")
+    assert len(result) == 1
+    assert result[0] == "The value is 4.5 meters."
+
+
+def test_split_text_to_sentences_still_splits_on_real_period() -> None:
+    """Normal sentence-ending periods must still trigger splitting."""
+    result = _split_text_to_sentences("Hello world. Goodbye.")
+    assert len(result) == 2
+    assert result[0] == "Hello world."
+    assert result[1] == "Goodbye."
 
 
 # ---------------------------------------------------------------------------

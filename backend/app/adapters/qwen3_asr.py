@@ -120,11 +120,16 @@ def _split_text_into_sentences(text: str) -> list[str]:
     Returns a list of non-empty sentence strings (punctuation preserved).
     """
     # Split after sentence-ending punctuation, keeping the delimiter.
+    # Skip '.' that is a decimal point (digit.digit) to avoid splitting
+    # numbers like "4.5" or "3.14" into two sentences.
     parts: list[str] = []
     current: list[str] = []
-    for ch in text:
+    for i, ch in enumerate(text):
         current.append(ch)
         if ch in ".!?\u3002\uff01\uff1f":
+            if ch == "." and i > 0 and i + 1 < len(text):
+                if text[i - 1].isdigit() and text[i + 1].isdigit():
+                    continue
             parts.append("".join(current).strip())
             current = []
     trailing = "".join(current).strip()

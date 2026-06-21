@@ -374,7 +374,8 @@ class PipelineRunner:
 
         session = _require(self.artifacts.session, "session")
         asr_file = _require(self.artifacts.asr_fixed_file, "asr_fixed_file")
-        settings = database.get_openai_settings()
+        provider_id = task.get("translate_provider_id")
+        settings = database.get_translate_provider_settings(provider_id)
         settings["translate_mode"] = task.get("translate_mode") or "sentence"
         settings["validation_enabled"] = "true" if task.get("validate_translation") else ""
         source = get_source_for_task(task)

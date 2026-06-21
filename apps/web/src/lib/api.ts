@@ -88,6 +88,17 @@ export type TranslateProvider = {
 
 export type LocalDirection = "en-zh" | "zh-en"
 
+export type StageConfig = {
+  asr_model: string
+  asr_language: string
+  target_language: string
+  add_subtitles: boolean
+  translate_mode: string
+  validate_translation: boolean
+  tts_mode: string
+  translate_provider_id: string
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -164,16 +175,7 @@ export function rerunSingleStage(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/rerun-single-stage/${stageName}`, { method: "POST" })
 }
 
-export function updateTaskConfig(taskId: string, config: {
-  asr_model?: string | null
-  asr_language?: string
-  target_language?: string
-  add_subtitles?: boolean
-  translate_mode?: string | null
-  validate_translation?: boolean
-  tts_mode?: string | null
-  translate_provider_id?: string | null
-}) {
+export function updateTaskConfig(taskId: string, config: Partial<StageConfig>) {
   return request<Task>(`/api/tasks/${taskId}/config`, {
     method: "PATCH",
     body: JSON.stringify(config),
@@ -184,58 +186,16 @@ export function clearStageOutput(taskId: string, stageName: string) {
   return request<Task>(`/api/tasks/${taskId}/clear-stage/${stageName}`, { method: "POST" })
 }
 
-export function createTask(url: string, direction?: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string, translateProviderId?: string) {
-  const body: Record<string, unknown> = { url }
-  if (direction) {
-    const parts = direction.split("-")
-    body.asr_language = parts[0]
-    body.target_language = parts[1]
-  }
-  if (addSubtitles !== undefined) {
-    body.add_subtitles = addSubtitles
-  }
-  if (asrModel) {
-    body.asr_model = asrModel
-  }
-  if (translateMode) {
-    body.translate_mode = translateMode
-  }
-  if (validateTranslation !== undefined) {
-    body.validate_translation = validateTranslation
-  }
-  if (ttsMode) {
-    body.tts_mode = ttsMode
-  }
-  if (translateProviderId) {
-    body.translate_provider_id = translateProviderId
-  }
+export function createTask(url: string, config: StageConfig) {
   return request<Task>("/api/tasks", {
     method: "POST",
-    body: JSON.stringify(body),
+    body: JSON.stringify({ url, config }),
   })
 }
 
-export async function uploadLocalTask(file: File, direction: LocalDirection, addSubtitles?: boolean, asrModel?: string, translateMode?: string, validateTranslation?: boolean, ttsMode?: string, translateProviderId?: string) {
+export async function uploadLocalTask(file: File, config: StageConfig) {
   const form = new FormData()
-  form.append("direction", direction)
-  if (addSubtitles !== undefined) {
-    form.append("add_subtitles", String(addSubtitles))
-  }
-  if (asrModel) {
-    form.append("asr_model", asrModel)
-  }
-  if (translateMode) {
-    form.append("translate_mode", translateMode)
-  }
-  if (validateTranslation !== undefined) {
-    form.append("validate_translation", String(validateTranslation))
-  }
-  if (ttsMode) {
-    form.append("tts_mode", ttsMode)
-  }
-  if (translateProviderId) {
-    form.append("translate_provider_id", translateProviderId)
-  }
+  form.append("config", JSON.stringify(config))
   form.append("file", file)
 
   const response = await fetch(`${API_BASE}/api/tasks/upload`, {

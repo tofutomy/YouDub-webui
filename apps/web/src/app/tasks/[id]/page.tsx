@@ -36,19 +36,17 @@ import {
   stopTask,
   updateTaskConfig,
 } from "@/lib/api"
+import type { StageConfig } from "@/lib/api"
 import { useI18n, STAGE_INFO } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
 import {
-  AsrModelSelect,
-  DirectionSelect,
-  TranslateModeSelect,
-  TranslateProviderSelect,
-  ValidateTranslationCheckbox,
-  TtsModeSelect,
-  AddSubtitlesCheckbox,
-} from "@/components/stage-config-fields"
-import type { Direction } from "@/components/stage-config-fields"
+  CONFIGURABLE_STAGES,
+  DEFAULT_STAGE_CONFIG,
+  STAGE_FIELDS,
+  configForStage,
+  configFromTask,
+} from "@/lib/stage-config"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -137,13 +135,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const [clearingStage, setClearingStage] = useState(false)
   const [clearStageError, setClearStageError] = useState("")
   // Config form state
-  const [cfgAsrModel, setCfgAsrModel] = useState("")
-  const [cfgDirection, setCfgDirection] = useState<Direction>("en-zh")
-  const [cfgAddSubtitles, setCfgAddSubtitles] = useState(true)
-  const [cfgTranslateMode, setCfgTranslateMode] = useState("sentence")
-  const [cfgValidateTranslation, setCfgValidateTranslation] = useState(false)
-  const [cfgTtsMode, setCfgTtsMode] = useState("controllable_clone")
-  const [cfgTranslateProvider, setCfgTranslateProvider] = useState("")
+  const [cfgConfig, setCfgConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
 
   const handleDelete = async () => {
@@ -244,19 +236,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     setConfigStageTarget(stageName)
     setConfigError("")
     setConfigSuccess(false)
-    // Initialize form state from current task
     if (task) {
-      setCfgAsrModel(task.asr_model || "")
-      const al = task.asr_language || "en"
-      const tl = task.target_language || "zh"
-      setCfgDirection(al === "zh" && tl === "en" ? "zh-en" : "en-zh")
-      setCfgAddSubtitles(task.add_subtitles !== 0)
-      setCfgTranslateMode(task.translate_mode || "sentence")
-      setCfgValidateTranslation(task.validate_translation === 1)
-      setCfgTtsMode(task.tts_mode || "controllable_clone")
-      setCfgTranslateProvider(task.translate_provider_id || "")
+      setCfgConfig(configFromTask(task))
     }
-    // Load providers for translate stage config
     if (stageName === "translate") {
       getTranslateProviders()
         .then((resp) => setProviderOptions(resp.providers))
@@ -270,22 +252,8 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     setConfigError("")
     setConfigSuccess(false)
     try {
-      const config: Record<string, unknown> = {}
-      if (configStageTarget === "asr") {
-        config.asr_model = cfgAsrModel || null
-      } else if (configStageTarget === "translate") {
-        const parts = cfgDirection.split("-")
-        config.asr_language = parts[0]
-        config.target_language = parts[1]
-        config.translate_mode = cfgTranslateMode
-        config.validate_translation = cfgValidateTranslation
-        config.translate_provider_id = cfgTranslateProvider || null
-      } else if (configStageTarget === "merge_video") {
-        config.add_subtitles = cfgAddSubtitles
-      } else if (configStageTarget === "tts") {
-        config.tts_mode = cfgTtsMode
-      }
-      const next = await updateTaskConfig(id, config as Parameters<typeof updateTaskConfig>[1])
+      const patch = configForStage(configStageTarget, cfgConfig)
+      const next = await updateTaskConfig(id, patch)
       setTask(next)
       setConfigSuccess(true)
     } catch (err) {
@@ -293,13 +261,6 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     } finally {
       setConfigSaving(false)
     }
-  }
-
-  const STAGE_CONFIG_MAP: Record<string, string[]> = {
-    asr: ["asr_model"],
-    translate: ["direction"],
-    tts: ["tts_mode"],
-    merge_video: ["add_subtitles"],
   }
 
   const handleClearStage = async () => {
@@ -502,7 +463,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                               <Info className="size-3.5" />
                             </button>
                           ) : null}
-                          {STAGE_CONFIG_MAP[stage.name] && canRerunStage ? (
+                          {CONFIGURABLE_STAGES.includes(stage.name) && canRerunStage ? (
                             <button
                               type="button"
                               className="text-muted-foreground hover:text-foreground"
@@ -707,49 +668,18 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                 <DialogHeader>
                   <DialogTitle>{t.task.stageConfigTitle}</DialogTitle>
                 </DialogHeader>
-                {configStageTarget === "asr" ? (
-                  <AsrModelSelect
-                    id="cfg-asr-model"
-                    value={cfgAsrModel}
-                    onChange={setCfgAsrModel}
-                  />
-                ) : null}
-                {configStageTarget === "translate" ? (
+                {configStageTarget && STAGE_FIELDS[configStageTarget] ? (
                   <div className="space-y-4">
-                    <TranslateProviderSelect
-                      id="cfg-translate-provider"
-                      value={cfgTranslateProvider}
-                      options={providerOptions}
-                      onChange={setCfgTranslateProvider}
-                    />
-                    <DirectionSelect
-                      id="cfg-direction"
-                      value={cfgDirection}
-                      onChange={setCfgDirection}
-                    />
-                    <TranslateModeSelect
-                      id="cfg-translate-mode"
-                      value={cfgTranslateMode}
-                      onChange={setCfgTranslateMode}
-                    />
-                    <ValidateTranslationCheckbox
-                      checked={cfgValidateTranslation}
-                      onChange={setCfgValidateTranslation}
-                    />
+                    {STAGE_FIELDS[configStageTarget].map((field, i) => (
+                      <div key={i}>
+                        {field.render({
+                          config: cfgConfig,
+                          onChange: (patch) => setCfgConfig((prev) => ({ ...prev, ...patch })),
+                          providerOptions,
+                        })}
+                      </div>
+                    ))}
                   </div>
-                ) : null}
-                {configStageTarget === "tts" ? (
-                  <TtsModeSelect
-                    id="cfg-tts-mode"
-                    value={cfgTtsMode}
-                    onChange={setCfgTtsMode}
-                  />
-                ) : null}
-                {configStageTarget === "merge_video" ? (
-                  <AddSubtitlesCheckbox
-                    checked={cfgAddSubtitles}
-                    onChange={setCfgAddSubtitles}
-                  />
                 ) : null}
                 {configError ? (
                   <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

@@ -20,6 +20,7 @@ from .pipeline import run_task, run_task_single_stage
 from .runtime_checks import validate_runtime_device
 from .sanitize import sanitize_text
 from .stops import STOPPED_BEFORE_START_MESSAGE, mark_task_as_stopped
+from .task_config import TaskConfig
 from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".flv", ".wmv"}
@@ -35,14 +36,7 @@ def mask_secret(value: str) -> str:
 
 class TaskCreate(BaseModel):
     url: str
-    asr_language: str | None = None
-    target_language: str | None = None
-    add_subtitles: bool = True
-    asr_model: str | None = None
-    translate_mode: str | None = None
-    validate_translation: bool = False
-    tts_mode: str | None = None
-    translate_provider_id: str | None = None
+    config: TaskConfig = TaskConfig()
 
 
 class TranslateProviderCreate(BaseModel):
@@ -193,23 +187,7 @@ def create_task(payload: TaskCreate) -> dict:
 
     existing_id = database.find_task_by_video_id(video_id)
     if existing_id:
-        fields: dict[str, object] = {}
-        if payload.asr_language is not None:
-            fields["asr_language"] = payload.asr_language
-        if payload.target_language is not None:
-            fields["target_language"] = payload.target_language
-        if payload.add_subtitles is not None:
-            fields["add_subtitles"] = int(payload.add_subtitles)
-        if payload.asr_model is not None:
-            fields["asr_model"] = payload.asr_model or None
-        if payload.translate_mode is not None:
-            fields["translate_mode"] = payload.translate_mode or None
-        if _payload_has_field(payload, "validate_translation"):
-            fields["validate_translation"] = int(payload.validate_translation)
-        if payload.tts_mode is not None:
-            fields["tts_mode"] = payload.tts_mode or None
-        if payload.translate_provider_id is not None:
-            fields["translate_provider_id"] = payload.translate_provider_id or None
+        fields = payload.config.to_db_fields(only_set=True)
         if fields:
             database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
@@ -218,14 +196,7 @@ def create_task(payload: TaskCreate) -> dict:
     task_id = database.create_task(
         payload.url.strip(),
         task_id=video_id,
-        asr_language=payload.asr_language,
-        target_language=payload.target_language,
-        add_subtitles=payload.add_subtitles,
-        asr_model=payload.asr_model,
-        translate_mode=payload.translate_mode,
-        validate_translation=payload.validate_translation,
-        tts_mode=payload.tts_mode,
-        translate_provider_id=payload.translate_provider_id,
+        **payload.config.to_db_fields(),
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -263,15 +234,13 @@ def _save_uploaded_file(file: UploadFile, destination: Path) -> int:
 
 @app.post("/api/tasks/upload", status_code=201)
 def upload_local_video(
-    direction: str = Form("en-zh"),
-    add_subtitles: bool = Form(True),
-    asr_model: str = Form(""),
-    translate_mode: str = Form(""),
-    validate_translation: bool = Form(False),
-    tts_mode: str = Form(""),
-    translate_provider_id: str = Form(""),
+    config: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
+    cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
+    asr_language = cfg.asr_language or "en"
+    target_language = cfg.target_language or "zh"
+    direction = f"{asr_language}-{target_language}"
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
         raise HTTPException(status_code=422, detail="Unsupported local video direction.")
 
@@ -287,19 +256,10 @@ def upload_local_video(
         raise
 
     url = f"local://upload/{task_id}?direction={direction}&filename={quote(original_name)}"
-    # Parse direction into asr_language and target_language
-    asr_language, target_language = direction.split("-", 1)
     database.create_task(
         url,
         task_id=task_id,
-        asr_language=asr_language,
-        target_language=target_language,
-        add_subtitles=add_subtitles,
-        asr_model=asr_model or None,
-        translate_mode=translate_mode or None,
-        validate_translation=validate_translation,
-        tts_mode=tts_mode or None,
-        translate_provider_id=translate_provider_id or None,
+        **cfg.to_db_fields(),
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -311,48 +271,14 @@ def current_task() -> dict | None:
     return database.get_current_task()
 
 
-class TaskConfigUpdate(BaseModel):
-    asr_model: str | None = None
-    asr_language: str | None = None
-    target_language: str | None = None
-    add_subtitles: bool | None = None
-    translate_mode: str | None = None
-    validate_translation: bool | None = None
-    tts_mode: str | None = None
-    translate_provider_id: str | None = None
-
-
-def _payload_has_field(payload: BaseModel, field: str) -> bool:
-    fields_set = getattr(payload, "model_fields_set", None)
-    if fields_set is None:
-        fields_set = getattr(payload, "__fields_set__", set())
-    return field in fields_set
-
-
 @app.patch("/api/tasks/{task_id}/config")
-def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
+def update_task_config(task_id: str, payload: TaskConfig) -> dict:
     task = database.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
-    fields: dict[str, object] = {}
-    if _payload_has_field(payload, "asr_model"):
-        fields["asr_model"] = payload.asr_model or None
-    if _payload_has_field(payload, "asr_language") and payload.asr_language is not None:
-        fields["asr_language"] = payload.asr_language
-    if _payload_has_field(payload, "target_language") and payload.target_language is not None:
-        fields["target_language"] = payload.target_language
-    if _payload_has_field(payload, "add_subtitles") and payload.add_subtitles is not None:
-        fields["add_subtitles"] = int(payload.add_subtitles)
-    if _payload_has_field(payload, "translate_mode") and payload.translate_mode is not None:
-        fields["translate_mode"] = payload.translate_mode or None
-    if _payload_has_field(payload, "validate_translation") and payload.validate_translation is not None:
-        fields["validate_translation"] = int(payload.validate_translation)
-    if _payload_has_field(payload, "tts_mode"):
-        fields["tts_mode"] = payload.tts_mode or None
-    if _payload_has_field(payload, "translate_provider_id"):
-        fields["translate_provider_id"] = payload.translate_provider_id or None
+    fields = payload.to_db_fields(only_set=True)
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)
@@ -415,18 +341,9 @@ def rerun_task(task_id: str) -> dict:
 
     _ensure_runtime_ready()
     url = task["url"]
-    preserved_config = {
-        "asr_language": task.get("asr_language"),
-        "target_language": task.get("target_language"),
-        "add_subtitles": task.get("add_subtitles", 1) != 0,
-        "asr_model": task.get("asr_model"),
-        "translate_mode": task.get("translate_mode"),
-        "validate_translation": task.get("validate_translation") == 1,
-        "tts_mode": task.get("tts_mode"),
-        "translate_provider_id": task.get("translate_provider_id"),
-    }
+    preserved_config = TaskConfig.from_task_dict(task)
     _purge_task(task)
-    new_id = database.create_task(url, task_id=task_id, **preserved_config)
+    new_id = database.create_task(url, task_id=task_id, **preserved_config.to_db_fields())
     worker.enqueue(new_id)
     return database.get_task(new_id)
 

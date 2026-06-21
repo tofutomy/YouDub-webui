@@ -55,12 +55,14 @@ def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
         "/api/tasks",
         json={
             "url": "https://www.bilibili.com/video/BV1UNAbzpEzR",
-            "asr_language": "en",
-            "target_language": "zh",
-            "asr_model": "",
-            "translate_mode": "batch",
-            "validate_translation": False,
-            "tts_mode": "hifi_clone",
+            "config": {
+                "asr_language": "en",
+                "target_language": "zh",
+                "asr_model": "",
+                "translate_mode": "batch",
+                "validate_translation": False,
+                "tts_mode": "hifi_clone",
+            },
         },
     )
 
@@ -743,7 +745,7 @@ def test_upload_local_video_creates_task_and_saved_file(monkeypatch, tmp_path):
 
     response = client.post(
         "/api/tasks/upload",
-        data={"direction": "zh-en"},
+        data={"config": '{"asr_language":"zh","target_language":"en"}'},
         files={"file": ("clip.mp4", b"mp4data", "video/mp4")},
     )
 
@@ -782,7 +784,7 @@ def test_delete_local_video_removes_upload(monkeypatch, tmp_path):
     client = TestClient(main.app)
     upload = client.post(
         "/api/tasks/upload",
-        data={"direction": "en-zh"},
+        data={"config": '{"asr_language":"en","target_language":"zh"}'},
         files={"file": ("clip.mp4", b"mp4data", "video/mp4")},
     )
     task_id = upload.json()["id"]

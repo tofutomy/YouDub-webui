@@ -17,15 +17,10 @@ import { useI18n } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
 import {
-  AsrModelSelect,
-  DirectionSelect,
-  TranslateModeSelect,
-  TranslateProviderSelect,
-  ValidateTranslationCheckbox,
-  TtsModeSelect,
-  AddSubtitlesCheckbox,
-} from "@/components/stage-config-fields"
-import type { Direction } from "@/components/stage-config-fields"
+  DEFAULT_STAGE_CONFIG,
+  STAGE_FIELDS,
+} from "@/lib/stage-config"
+import type { StageConfig } from "@/lib/api"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -38,6 +33,8 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+
+const CREATE_SECTION_STAGES = ["translate", "asr", "tts", "merge_video"] as const
 
 function isActive(status: string) {
   return status === "queued" || status === "running"
@@ -65,17 +62,15 @@ export default function Home() {
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
-  const [direction, setDirection] = useState<Direction>("en-zh")
-  const [addSubtitles, setAddSubtitles] = useState(true)
-  const [asrModel, setAsrModel] = useState("")
-  const [translateMode, setTranslateMode] = useState("sentence")
-  const [validateTranslation, setValidateTranslation] = useState(false)
-  const [ttsMode, setTtsMode] = useState("controllable_clone")
-  const [translateProvider, setTranslateProvider] = useState("")
+  const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
+
+  function updateConfig(patch: Partial<StageConfig>) {
+    setConfig((prev) => ({ ...prev, ...patch }))
+  }
 
   async function refreshTasks() {
     const { tasks: list } = await listTasks()
@@ -118,8 +113,8 @@ export default function Home() {
     setSubmitting(true)
     try {
       const created = localFile
-      ? await uploadLocalTask(localFile, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode, translateProvider || undefined)
-      : await createTask(submittedUrl, direction, addSubtitles, asrModel || undefined, translateMode, validateTranslation, ttsMode, translateProvider || undefined)
+        ? await uploadLocalTask(localFile, config)
+        : await createTask(submittedUrl, config)
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
@@ -139,6 +134,13 @@ export default function Home() {
   const hasUrl = Boolean(youtubeUrl.trim() || bilibiliUrl.trim())
   const hasLocalFile = Boolean(localFile)
   const canSubmit = Boolean((hasUrl || hasLocalFile) && !submitting)
+
+  const sectionLabelKey: Record<string, string> = {
+    translate: t.home.groupTranslate,
+    asr: t.home.groupAsr,
+    tts: t.home.groupTts,
+    merge_video: t.home.groupMergeVideo,
+  }
 
   return (
     <main className="min-h-screen bg-[linear-gradient(135deg,#fff5f5_0%,#f2fbff_48%,#fff4fa_100%)] text-foreground">
@@ -186,68 +188,27 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Translate */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Separator className="flex-1" />
-                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupTranslate}</span>
-                  <Separator className="flex-1" />
-                </div>
-                <DirectionSelect
-                  id="direction"
-                  value={direction}
-                  onChange={setDirection}
-                />
-                <TranslateModeSelect
-                  id="translate-mode"
-                  value={translateMode}
-                  onChange={setTranslateMode}
-                />
-                <ValidateTranslationCheckbox
-                  checked={validateTranslation}
-                  onChange={setValidateTranslation}
-                />
-                <TranslateProviderSelect
-                  id="translate-provider"
-                  value={translateProvider}
-                  options={providerOptions}
-                  onChange={setTranslateProvider}
-                />
-              </div>
-
-              {/* ASR */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Separator className="flex-1" />
-                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupAsr}</span>
-                  <Separator className="flex-1" />
-                </div>
-                <AsrModelSelect
-                  id="asr-model"
-                  value={asrModel}
-                  onChange={setAsrModel}
-                />
-              </div>
-
-              {/* TTS */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Separator className="flex-1" />
-                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupTts}</span>
-                  <Separator className="flex-1" />
-                </div>
-                <TtsModeSelect value={ttsMode} onChange={setTtsMode} />
-              </div>
-
-              {/* Merge video */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2">
-                  <Separator className="flex-1" />
-                  <span className="text-xs font-medium text-muted-foreground">{t.home.groupMergeVideo}</span>
-                  <Separator className="flex-1" />
-                </div>
-                <AddSubtitlesCheckbox checked={addSubtitles} onChange={setAddSubtitles} />
-              </div>
+              {/* Stage config sections (from registry) */}
+              {CREATE_SECTION_STAGES.map((stage) => {
+                const fields = STAGE_FIELDS[stage]
+                if (!fields || fields.length === 0) return null
+                return (
+                  <div key={stage} className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Separator className="flex-1" />
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {sectionLabelKey[stage]}
+                      </span>
+                      <Separator className="flex-1" />
+                    </div>
+                    {fields.map((field, i) => (
+                      <div key={i}>
+                        {field.render({ config, onChange: updateConfig, providerOptions })}
+                      </div>
+                    ))}
+                  </div>
+                )
+              })}
 
               <div className="flex items-center justify-between gap-3">
                 {queued > 0 ? (

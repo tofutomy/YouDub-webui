@@ -29,6 +29,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   translate_provider_id: "",
   demucs_model: "",
   demucs_shifts: 1,
+  use_amp: true,
 }
 
 export function configFromTask(task: Task): StageConfig {
@@ -46,6 +47,7 @@ export function configFromTask(task: Task): StageConfig {
     translate_provider_id: task.translate_provider_id || "",
     demucs_model: task.demucs_model || "",
     demucs_shifts: task.demucs_shifts ?? 1,
+    use_amp: task.use_amp !== 0,
   }
 }
 
@@ -80,10 +82,11 @@ export interface StageFieldDef {
 export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
   separate: [
     {
-      keys: ["demucs_model", "demucs_shifts"],
+      keys: ["demucs_model", "demucs_shifts", "use_amp"],
       render: ({ config, onChange }) => (
         <SeparateModeSelect
           demucs_shifts={config.demucs_shifts}
+          use_amp={config.use_amp}
           onChange={onChange}
         />
       ),

@@ -84,6 +84,8 @@ const messages: Record<UiLanguage, Messages> = {
       separateModeHighQuality: "High quality",
       separateModeBalancedDesc: "Fast 3x speed with minimal quality loss (shifts=1).",
       separateModeHighQualityDesc: "Best audio quality, slower processing (shifts=3).",
+      useAmp: "GPU mixed precision (AMP float16)",
+      useAmpDesc: "Use Tensor Cores for 1.5-2x speedup. Recommended for RTX 30/40 series.",
     },
     task: {
       overview: "Task overview",
@@ -270,6 +272,8 @@ const messages: Record<UiLanguage, Messages> = {
       separateModeHighQuality: "高精度",
       separateModeBalancedDesc: "速度快 3 倍，音质损失极小（shifts=1）。",
       separateModeHighQualityDesc: "最佳音质，处理较慢（shifts=3）。",
+      useAmp: "GPU 混合精度（AMP float16）",
+      useAmpDesc: "利用 Tensor Core 加速，速度提升 1.5-2 倍。推荐 RTX 30/40 系列使用。",
     },
     task: {
       overview: "任务概览",

@@ -5,7 +5,14 @@ from pathlib import Path
 from typing import Callable
 
 from .config import COOKIE_DIR
-from .youtube import is_bilibili_url, is_local_en_to_zh_url, is_local_zh_to_en_url, is_youtube_url
+from .youtube import (
+    is_bilibili_url,
+    is_local_en_to_zh_url,
+    is_local_zh_to_en_url,
+    is_localdir_en_to_zh_url,
+    is_localdir_zh_to_en_url,
+    is_youtube_url,
+)
 
 
 LANG_NAMES = {"en": "English", "zh": "Simplified Chinese"}
@@ -63,6 +70,22 @@ SOURCES: list[SourceConfig] = [
         target_language="en",
     ),
     SourceConfig(
+        name="localdir",
+        matches=is_localdir_en_to_zh_url,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language="en",
+        target_language="zh",
+    ),
+    SourceConfig(
+        name="localdir",
+        matches=is_localdir_zh_to_en_url,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language="zh",
+        target_language="en",
+    ),
+    SourceConfig(
         name="bilibili",
         matches=is_bilibili_url,
         use_proxy=False,
@@ -93,7 +116,7 @@ def _task_languages(task: dict, source: SourceConfig) -> tuple[str, str]:
         return asr_language, _opposite_language(asr_language)
     if target_language:
         return _opposite_language(target_language), target_language
-    if source.name == "local":
+    if source.name in ("local", "localdir"):
         return source.asr_language, source.target_language
     return DEFAULT_ASR_LANGUAGE, DEFAULT_TARGET_LANGUAGE
 

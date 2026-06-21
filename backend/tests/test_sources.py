@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from backend.app.sources import get_source_for_task
+from backend.app.youtube import make_localdir_url
 
 
 def test_bilibili_task_without_language_uses_app_default_direction() -> None:
@@ -17,5 +18,32 @@ def test_task_language_pair_is_inferred_from_one_side() -> None:
         "target_language": "en",
     })
 
+    assert source.asr_language == "zh"
+    assert source.target_language == "en"
+
+
+def test_localdir_task_detected_as_localdir_source() -> None:
+    url = make_localdir_url("task-001", r"G:\videos\test.mp4", "en-zh", "test.mp4")
+    source = get_source_for_task({"url": url})
+
+    assert source.name == "localdir"
+    assert source.asr_language == "en"
+    assert source.target_language == "zh"
+
+
+def test_localdir_task_zh_to_en() -> None:
+    url = make_localdir_url("task-002", "/home/user/视频.mp4", "zh-en", "视频.mp4")
+    source = get_source_for_task({"url": url})
+
+    assert source.name == "localdir"
+    assert source.asr_language == "zh"
+    assert source.target_language == "en"
+
+
+def test_localdir_task_with_explicit_languages() -> None:
+    url = make_localdir_url("task-003", r"C:\v.mp4", "en-zh")
+    source = get_source_for_task({"url": url, "asr_language": "zh", "target_language": "en"})
+
+    assert source.name == "localdir"
     assert source.asr_language == "zh"
     assert source.target_language == "en"

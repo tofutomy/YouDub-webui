@@ -21,7 +21,7 @@ from .runtime_checks import validate_runtime_device
 from .sanitize import sanitize_text
 from .stops import STOPPED_BEFORE_START_MESSAGE, mark_task_as_stopped
 from .task_config import TaskConfig
-from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url
+from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url, is_localdir_url, make_localdir_url
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".flv", ".wmv"}
 LOCAL_UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -36,6 +36,11 @@ def mask_secret(value: str) -> str:
 
 class TaskCreate(BaseModel):
     url: str
+    config: TaskConfig = TaskConfig()
+
+
+class LocaldirTaskCreate(BaseModel):
+    file_path: str
     config: TaskConfig = TaskConfig()
 
 
@@ -262,6 +267,37 @@ def upload_local_video(
         **cfg.to_db_fields(),
     )
     database.update_task(task_id, title=Path(original_name).stem)
+    worker.enqueue(task_id)
+    return database.get_task(task_id)
+
+
+@app.post("/api/tasks/localdir", status_code=201)
+def create_localdir_task(payload: LocaldirTaskCreate) -> dict:
+    file_path = payload.file_path.strip()
+    if not file_path:
+        raise HTTPException(status_code=422, detail="File path is required.")
+
+    source_file = Path(file_path)
+    if not source_file.is_file():
+        raise HTTPException(status_code=422, detail=f"File not found: {file_path}")
+
+    suffix = source_file.suffix.lower()
+    if suffix not in ALLOWED_VIDEO_SUFFIXES:
+        raise HTTPException(status_code=422, detail=f"Unsupported video file type: {suffix}")
+
+    cfg = payload.config
+    asr_language = cfg.asr_language or "en"
+    target_language = cfg.target_language or "zh"
+    direction = f"{asr_language}-{target_language}"
+    if direction not in LOCAL_UPLOAD_DIRECTIONS:
+        raise HTTPException(status_code=422, detail="Unsupported direction.")
+
+    _ensure_runtime_ready()
+
+    task_id = str(uuid.uuid4())
+    url = make_localdir_url(task_id, file_path, direction, filename=source_file.name)
+    database.create_task(url, task_id=task_id, **cfg.to_db_fields())
+    database.update_task(task_id, title=source_file.stem)
     worker.enqueue(task_id)
     return database.get_task(task_id)
 

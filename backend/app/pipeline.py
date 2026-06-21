@@ -13,7 +13,7 @@ from .runtime_checks import validate_runtime_device
 from .sources import detect_source, get_source_for_task
 from .stages import STAGES
 from .stops import STOPPED_MESSAGE, mark_task_as_stopped
-from .youtube import is_local_upload_url
+from .youtube import is_local_upload_url, is_localdir_url
 
 
 class PipelineStopped(Exception):
@@ -301,6 +301,10 @@ class PipelineRunner:
             from .adapters.local_video import import_local_video
 
             session, info = import_local_video(task["url"], WORKFOLDER, source)
+        elif is_localdir_url(task["url"]):
+            from .adapters.local_video import import_localdir_video
+
+            session, info = import_localdir_video(task["url"], WORKFOLDER, source)
         else:
             from .adapters.ytdlp import download_video
 

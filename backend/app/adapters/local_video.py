@@ -9,7 +9,7 @@ from urllib.parse import parse_qs, urlparse
 from ..config import ffmpeg_binary
 from ..sanitize import sanitize_text
 from ..sources import SourceConfig
-from ..youtube import local_upload_task_id
+from ..youtube import local_upload_task_id, localdir_filename, localdir_source_path, localdir_task_id
 
 
 def upload_dir(workfolder: Path, task_id: str) -> Path:
@@ -107,4 +107,56 @@ def import_local_video(url: str, workfolder: Path, source: SourceConfig) -> tupl
     _transcode_to_mp4(source_file, video_file)
     if not video_file.exists() or video_file.stat().st_size == 0:
         raise RuntimeError("ffmpeg finished without producing media/video_source.mp4")
+    return session, info
+
+
+def import_localdir_video(url: str, workfolder: Path, source: SourceConfig) -> tuple[Path, dict]:
+    """Import a video from a local file path (no copy, transcode only)."""
+    task_id = localdir_task_id(url)
+    if not task_id:
+        raise ValueError("Invalid localdir URL.")
+
+    source_path = localdir_source_path(url)
+    if not source_path:
+        raise ValueError("localdir URL is missing the source file path.")
+
+    source_file = Path(source_path)
+    if not source_file.is_file():
+        raise FileNotFoundError(f"Source video not found: {source_path}")
+
+    filename = localdir_filename(url) or source_file.name
+    title = Path(filename).stem or source_file.stem
+    session = _session_path(workfolder, task_id, title)
+    media_dir = session / "media"
+    metadata_dir = session / "metadata"
+    media_dir.mkdir(parents=True, exist_ok=True)
+    metadata_dir.mkdir(parents=True, exist_ok=True)
+
+    video_file = media_dir / "video_source.mp4"
+    info = {
+        "id": task_id,
+        "title": title,
+        "source": "localdir",
+        "webpage_url": url,
+        "original_path": str(source_file),
+        "asr_language": source.asr_language,
+        "target_language": source.target_language,
+    }
+    metadata_file = metadata_dir / "local_info.json"
+    metadata_file.write_text(json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if video_file.exists() and video_file.stat().st_size > 0:
+        return session, info
+
+    # Create a symlink (or hard link fallback) instead of copying/transcoding.
+    # This avoids any data duplication — subsequent pipeline stages read the
+    # original file transparently through the link.
+    if video_file.exists() or video_file.is_symlink():
+        video_file.unlink()
+    try:
+        video_file.symlink_to(source_file.resolve())
+    except OSError:
+        # Windows without developer mode / admin — fall back to hard link.
+        import os
+        os.link(str(source_file.resolve()), str(video_file))
     return session, info

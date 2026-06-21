@@ -8,6 +8,7 @@ import { ChevronRight, Play, Upload } from "lucide-react"
 import {
   TaskSummary,
   TranslateProvider,
+  createLocaldirTask,
   createTask,
   getTranslateProviders,
   listTasks,
@@ -62,6 +63,7 @@ export default function Home() {
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
+  const [localPath, setLocalPath] = useState("")
   const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
@@ -109,15 +111,22 @@ export default function Home() {
     event.preventDefault()
     setError("")
     const submittedUrl = youtubeUrl.trim() || bilibiliUrl.trim()
-    if (!submittedUrl && !localFile) return
+    const submittedPath = localPath.trim()
+    if (!submittedUrl && !localFile && !submittedPath) return
     setSubmitting(true)
     try {
-      const created = localFile
-        ? await uploadLocalTask(localFile, config)
-        : await createTask(submittedUrl, config)
+      let created
+      if (localFile) {
+        created = await uploadLocalTask(localFile, config)
+      } else if (submittedPath) {
+        created = await createLocaldirTask(submittedPath, config)
+      } else {
+        created = await createTask(submittedUrl, config)
+      }
       setYoutubeUrl("")
       setBilibiliUrl("")
       setLocalFile(null)
+      setLocalPath("")
       if (fileInputRef.current) {
         fileInputRef.current.value = ""
       }
@@ -133,7 +142,8 @@ export default function Home() {
   const queued = activeCount(tasks)
   const hasUrl = Boolean(youtubeUrl.trim() || bilibiliUrl.trim())
   const hasLocalFile = Boolean(localFile)
-  const canSubmit = Boolean((hasUrl || hasLocalFile) && !submitting)
+  const hasLocalPath = Boolean(localPath.trim())
+  const canSubmit = Boolean((hasUrl || hasLocalFile || hasLocalPath) && !submitting)
 
   const sectionLabelKey: Record<string, string> = {
     translate: t.home.groupTranslate,
@@ -162,7 +172,7 @@ export default function Home() {
                     value={youtubeUrl}
                     onChange={(event) => setYoutubeUrl(event.target.value)}
                     placeholder="https://www.youtube.com/watch?v=..."
-                    disabled={Boolean(bilibiliUrl.trim()) || hasLocalFile}
+                    disabled={Boolean(bilibiliUrl.trim()) || hasLocalFile || hasLocalPath}
                   />
                 </div>
                 <div className="space-y-2">
@@ -172,7 +182,7 @@ export default function Home() {
                     value={bilibiliUrl}
                     onChange={(event) => setBilibiliUrl(event.target.value)}
                     placeholder="https://www.bilibili.com/video/BV..."
-                    disabled={Boolean(youtubeUrl.trim()) || hasLocalFile}
+                    disabled={Boolean(youtubeUrl.trim()) || hasLocalFile || hasLocalPath}
                   />
                 </div>
                 <div className="space-y-2">
@@ -183,7 +193,17 @@ export default function Home() {
                     type="file"
                     accept="video/*,.mp4,.mov,.m4v,.mkv,.webm,.avi,.flv,.wmv"
                     onChange={selectLocalFile}
-                    disabled={hasUrl}
+                    disabled={hasUrl || hasLocalPath}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="local-path">{t.home.localDirLabel}</Label>
+                  <Input
+                    id="local-path"
+                    value={localPath}
+                    onChange={(event) => setLocalPath(event.target.value)}
+                    placeholder={t.home.localDirPlaceholder}
+                    disabled={hasUrl || hasLocalFile}
                   />
                 </div>
               </div>
@@ -219,7 +239,7 @@ export default function Home() {
                   <span />
                 )}
                 <Button type="submit" disabled={!canSubmit}>
-                  {hasLocalFile ? <Upload className="size-4" /> : <Play className="size-4" />}
+                  {(hasLocalFile || hasLocalPath) ? <Upload className="size-4" /> : <Play className="size-4" />}
                   {submitting ? t.home.submitting : t.home.createTask}
                 </Button>
               </div>

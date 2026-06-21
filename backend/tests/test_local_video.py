@@ -6,6 +6,7 @@ from pathlib import Path
 
 from backend.app.adapters import local_video
 from backend.app.sources import detect_source
+from backend.app.youtube import make_localdir_url
 
 
 def test_import_local_video_transcodes_with_configured_ffmpeg(monkeypatch, tmp_path):
@@ -38,3 +39,59 @@ def test_import_local_video_transcodes_with_configured_ffmpeg(monkeypatch, tmp_p
     assert commands[0][0] == "/opt/bin/ffmpeg"
     assert commands[0][-1] == str(session / "media" / "video_source.mp4")
     metadata = json.loads((session / "metadata" / "local_info.json").read_text(encoding="utf-8"))
+    assert metadata["source"] == "local"
+
+
+def test_import_localdir_video_creates_link_to_source(monkeypatch, tmp_path):
+    """localdir imports create a symlink/hardlink to the source (no copy)."""
+    task_id = "dir-task-001"
+    source_file = tmp_path / "source_video.mkv"
+    source_file.write_bytes(b"mkv-content")
+
+    url = make_localdir_url(task_id, str(source_file), "en-zh", "source_video.mkv")
+    source = detect_source(url)
+
+    session, info = local_video.import_localdir_video(url, tmp_path, source)
+
+    video_link = session / "media" / "video_source.mp4"
+    assert video_link.exists()
+    # The link should point back to the original source content
+    assert video_link.read_bytes() == b"mkv-content"
+    assert info["title"] == "source_video"
+    assert info["source"] == "localdir"
+    assert info["original_path"] == str(source_file)
+    assert info["asr_language"] == "en"
+    assert info["target_language"] == "zh"
+    metadata = json.loads((session / "metadata" / "local_info.json").read_text(encoding="utf-8"))
+    assert metadata["source"] == "localdir"
+    assert metadata["original_path"] == str(source_file)
+
+
+def test_import_localdir_video_skips_when_link_exists(monkeypatch, tmp_path):
+    """If video_source.mp4 link already exists, skip creation."""
+    task_id = "dir-task-002"
+    source_file = tmp_path / "existing.mp4"
+    source_file.write_bytes(b"mp4-content")
+
+    url = make_localdir_url(task_id, str(source_file), "zh-en", "existing.mp4")
+    source = detect_source(url)
+
+    # First call — creates link
+    session, _ = local_video.import_localdir_video(url, tmp_path, source)
+    video_link = session / "media" / "video_source.mp4"
+    assert video_link.exists()
+
+    # Second call — should not fail or recreate
+    session2, info2 = local_video.import_localdir_video(url, tmp_path, source)
+    assert session2 == session
+
+
+def test_import_localdir_video_rejects_missing_file(monkeypatch, tmp_path):
+    """Raises FileNotFoundError when source path does not exist."""
+    url = make_localdir_url("missing-task", "/nonexistent/video.mp4", "en-zh")
+    source = detect_source(url)
+
+    import pytest
+
+    with pytest.raises(FileNotFoundError, match="Source video not found"):
+        local_video.import_localdir_video(url, tmp_path, source)

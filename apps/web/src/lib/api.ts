@@ -212,6 +212,13 @@ export async function uploadLocalTask(file: File, config: StageConfig) {
   return response.json() as Promise<Task>
 }
 
+export function createLocaldirTask(filePath: string, config: StageConfig) {
+  return request<Task>("/api/tasks/localdir", {
+    method: "POST",
+    body: JSON.stringify({ file_path: filePath, config }),
+  })
+}
+
 export function getCookieInfo() {
   return request<CookieInfo>("/api/cookies/youtube")
 }

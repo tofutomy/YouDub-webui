@@ -96,11 +96,11 @@ function providerToForm(p: TranslateProvider): ProviderForm {
   }
 }
 
-function newProviderForm(): ProviderForm {
+function newProviderForm(baseUrl: string): ProviderForm {
   return {
     id: null,
     name: "",
-    baseUrl: "https://api.openai.com/v1",
+    baseUrl: baseUrl || "https://api.openai.com/v1",
     apiKey: "",
     model: "",
     isDefault: false,
@@ -369,7 +369,10 @@ export function SettingsDialog() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => setProviders((current) => [...current, newProviderForm()])}
+                    onClick={() => {
+                      const defaultBase = providers.find((p) => p.isDefault)?.baseUrl || providers[0]?.baseUrl || providers[0]?.baseUrl || providers[0]?.baseUrl || ""
+                      setProviders((current) => [...current, newProviderForm(defaultBase)])
+                    }}
                   >
                     <Plus className="size-3" />
                     {t.settings.addProvider}

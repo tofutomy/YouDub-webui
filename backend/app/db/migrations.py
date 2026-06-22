@@ -121,8 +121,6 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN demucs_model TEXT")
         if "demucs_shifts" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN demucs_shifts INTEGER DEFAULT 1")
-        if "use_amp" not in task_columns:
-            conn.execute("ALTER TABLE tasks ADD COLUMN use_amp INTEGER DEFAULT 1")
         if "filter_fillers" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN filter_fillers INTEGER DEFAULT 0")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}

@@ -245,7 +245,6 @@ _TASK_WRITABLE_FIELDS = frozenset({
     "add_subtitles", "asr_model", "stop_requested", "translate_mode",
     "validate_translation", "tts_mode", "translate_provider_id",
     "stop_after_translate", "filter_fillers", "demucs_model", "demucs_shifts",
-    "use_amp",
 })
 _STAGE_WRITABLE_FIELDS = frozenset({
     "label", "status", "progress", "started_at", "completed_at",

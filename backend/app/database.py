@@ -132,6 +132,8 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN demucs_shifts INTEGER DEFAULT 1")
         if "use_amp" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN use_amp INTEGER DEFAULT 1")
+        if "filter_fillers" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN filter_fillers INTEGER DEFAULT 0")
         stage_columns = {row["name"] for row in conn.execute("PRAGMA table_info(task_stages)").fetchall()}
         if "progress" not in stage_columns:
             conn.execute("ALTER TABLE task_stages ADD COLUMN progress INTEGER")
@@ -376,6 +378,7 @@ def create_task(
     tts_mode: str | None = None,
     translate_provider_id: str | None = None,
     stop_after_translate: bool = False,
+    filter_fillers: bool = False,
     demucs_model: str | None = None,
     demucs_shifts: int = 1,
 ) -> str:
@@ -384,10 +387,10 @@ def create_task(
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate, demucs_model, demucs_shifts)
-            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate, filter_fillers, demucs_model, demucs_shifts)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate), demucs_model, demucs_shifts),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate), int(filter_fillers), demucs_model, demucs_shifts),
         )
         conn.executemany(
             """

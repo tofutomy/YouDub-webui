@@ -101,6 +101,7 @@ export type StageConfig = {
   tts_mode: string
   translate_provider_id: string
   stop_after_translate: boolean
+  filter_fillers: boolean
   demucs_model: string
   demucs_shifts: number
 }

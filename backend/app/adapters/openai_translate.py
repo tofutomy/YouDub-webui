@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
@@ -180,8 +181,11 @@ def preprocess(
 
 
 def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = TRANSLATE_RULES[source.target_language]
+    rules = TRANSLATE_RULES.get(source.asr_language)
+    if rules is None:
+        rules = TRANSLATE_RULES["en"]
     return rules.format(
+        src_language_name=source.asr_language_name,
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
@@ -284,7 +288,11 @@ def _translate_batch_context_chunk(
         )
     # Fallback: translate each sentence individually
     log.warning("batch chunk failed after retries, falling back to per-sentence: %s", last_error)
-    system_single = TRANSLATE_RULES[target_language].format(
+    system_single = TRANSLATE_RULES.get(target_language)
+    if system_single is None:
+        system_single = TRANSLATE_RULES["en"]
+    system_single = system_single.format(
+        src_language_name="(unknown)",
         summary="(none)", hotwords="(none)", corrections="(none)",
         title="(unknown)", uploader="(unknown)", description="(none)",
     )
@@ -310,12 +318,20 @@ def translate_batch_context(
     concurrency: int = DEFAULT_CONCURRENCY,
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[int, str], None] | None = None,
+    completed: set[int] | None = None,
+    dst_list: list[str] | None = None,
+    checkpoint_file: Path | None = None,
 ) -> list[str]:
     if not texts:
         return []
 
-    rules = BATCH_TRANSLATE_RULES[source.target_language]
+    _completed = completed or set()
+
+    rules = BATCH_TRANSLATE_RULES.get(source.asr_language)
+    if rules is None:
+        rules = BATCH_TRANSLATE_RULES["en"]
     system = rules.format(
+        src_language_name=source.asr_language_name,
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
@@ -325,15 +341,26 @@ def translate_batch_context(
 
     half = max(1, batch_size // 2)
     chunks: list[tuple[int, list[str]]] = []
+    skipped = 0
     for start in range(0, len(texts), half):
         end = min(start + batch_size, len(texts))
+        # Skip chunk if ALL sentences in this range are already completed
+        if _completed and all(i in _completed for i in range(start, end)):
+            skipped += 1
+            continue
         chunks.append((start, texts[start:end]))
         if end >= len(texts):
             break
 
+    # Initialize merged from dst_list (preserving already-completed translations)
+    if dst_list and len(dst_list) == len(texts):
+        merged: list[str | None] = list(dst_list)
+    else:
+        merged = [None] * len(texts)
+
     log.info(
-        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d)",
-        len(texts), len(chunks), batch_size, concurrency,
+        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d, resumed=%d, skipped=%d)",
+        len(texts), len(chunks), batch_size, concurrency, len(_completed), skipped,
     )
 
     def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
@@ -343,7 +370,15 @@ def translate_batch_context(
         )
         return (idx, result)
 
-    merged: list[str | None] = [None] * len(texts)
+    _checkpoint_lock = threading.Lock()
+
+    def _save_checkpoint() -> None:
+        if not checkpoint_file:
+            return
+        with _checkpoint_lock:
+            cp = {str(i): merged[i] for i in range(len(merged)) if merged[i]}
+            checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         futures = {pool.submit(_do_chunk, c): c[0] for c in chunks}
         for future in as_completed(futures):
@@ -354,11 +389,15 @@ def translate_batch_context(
                     merged[pos] = t
                     if on_progress:
                         on_progress(pos, t)
+            # Real-time incremental checkpoint save after each chunk
+            _save_checkpoint()
     return [t or "" for t in merged]
 
 
 def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = VALIDATION_RULES[source.target_language]
+    rules = VALIDATION_RULES.get(source.asr_language)
+    if rules is None:
+        rules = VALIDATION_RULES["en"]
     return rules.format(
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
@@ -367,7 +406,9 @@ def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: Preproce
 
 
 def _correction_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = CORRECTION_RULES[source.target_language]
+    rules = CORRECTION_RULES.get(source.asr_language)
+    if rules is None:
+        rules = CORRECTION_RULES["en"]
     return rules.format(
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
@@ -752,33 +793,36 @@ def translate_asr(
             except Exception as exc:
                 log.warning("failed to load checkpoint, starting fresh: %s", exc)
 
-        def _save_checkpoint() -> None:
-            cp = {str(i): dst_list[i] for i in completed if dst_list[i]}
-            checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
-            log.info("checkpoint saved: %d/%d sentences", len(completed), len(texts))
-
         def _on_progress(idx: int, result: str) -> None:
             dst_list[idx] = result
             completed.add(idx)
             _first = next((s for s in dst_list if s), "")
             _report_translate(len(completed), _first)
 
-        try:
-            if mode == "batch":
-                log.info("translate mode=batch")
-                translate_batch_context(
-                    texts, source, meta, pre, **api, concurrency=concurrency,
-                    on_progress=_on_progress,
-                )
-            else:
-                log.info("translate mode=sentence")
+        if mode == "batch":
+            log.info("translate mode=batch")
+            # translate_batch_context handles checkpoint saving internally per chunk;
+            # completed/dst_list are passed to skip already-translated sentences.
+            translate_batch_context(
+                texts, source, meta, pre, **api, concurrency=concurrency,
+                on_progress=_on_progress,
+                completed=completed,
+                dst_list=dst_list,
+                checkpoint_file=checkpoint_file,
+            )
+        else:
+            log.info("translate mode=sentence")
+            try:
                 translate_batch(
                     texts, source, meta, pre, **api, concurrency=concurrency,
                     on_progress=_on_progress,
                 )
-        except Exception:
-            _save_checkpoint()
-            raise
+            except Exception:
+                # sentence mode still uses legacy exception-based checkpoint save
+                cp = {str(i): dst_list[i] for i in completed if dst_list[i]}
+                checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+                log.info("checkpoint saved: %d/%d sentences", len(completed), len(texts))
+                raise
 
         # Translation done — write output and delete checkpoint
         _write_translation(output_file, texts, dst_list, utterances, source)

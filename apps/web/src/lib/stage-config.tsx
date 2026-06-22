@@ -12,6 +12,7 @@ import {
   StopAfterTranslateCheckbox,
   TtsModeSelect,
   AddSubtitlesCheckbox,
+  FilterFillersCheckbox,
 } from "@/components/stage-config-fields"
 import type { Direction } from "@/components/stage-config-fields"
 
@@ -25,6 +26,7 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   translate_mode: "sentence",
   validate_translation: false,
   stop_after_translate: false,
+  filter_fillers: false,
   tts_mode: "controllable_clone",
   translate_provider_id: "",
   demucs_model: "",
@@ -42,6 +44,7 @@ export function configFromTask(task: Task): StageConfig {
     translate_mode: task.translate_mode || "sentence",
     validate_translation: task.validate_translation === 1,
     stop_after_translate: task.stop_after_translate === 1,
+    filter_fillers: task.filter_fillers === 1,
     tts_mode: task.tts_mode || "controllable_clone",
     translate_provider_id: task.translate_provider_id || "",
     demucs_model: task.demucs_model || "",
@@ -96,6 +99,17 @@ export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
         <AsrModelSelect
           value={config.asr_model}
           onChange={(v) => onChange({ asr_model: v })}
+        />
+      ),
+    },
+  ],
+  asr_fix: [
+    {
+      keys: ["filter_fillers"],
+      render: ({ config, onChange }) => (
+        <FilterFillersCheckbox
+          checked={config.filter_fillers}
+          onChange={(v) => onChange({ filter_fillers: v })}
         />
       ),
     },

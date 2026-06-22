@@ -390,11 +390,16 @@ class PipelineRunner:
         asr_file = _require(self.artifacts.asr_file, "asr_file")
         before = len(_json.loads(asr_file.read_text(encoding="utf-8"))["result"]["utterances"])
         source = get_source_for_task(task)
-        self.artifacts.asr_fixed_file = fix_asr_sentences(asr_file, session, language=source.asr_language)
+        do_filter = bool(task.get("filter_fillers"))
+        self.artifacts.asr_fixed_file = fix_asr_sentences(
+            asr_file, session, language=source.asr_language,
+            filter_fillers=do_filter,
+        )
         sentences = _json.loads(self.artifacts.asr_fixed_file.read_text(encoding="utf-8"))["result"]["utterances"]
+        filter_tag = " +fillers-filtered" if do_filter else ""
         self.stage_message(
             "asr_fix",
-            f"Re-segmented {before} -> {len(sentences)} sentences -> {self.artifacts.asr_fixed_file.name}",
+            f"Re-segmented {before} -> {len(sentences)} sentences{filter_tag} -> {self.artifacts.asr_fixed_file.name}",
         )
 
     def _translate(self, task: dict) -> None:

@@ -140,6 +140,28 @@ export function StopAfterTranslateCheckbox({ checked, onChange }: StopAfterTrans
   )
 }
 
+/* ── Filter Fillers Checkbox ── */
+
+interface FilterFillersCheckboxProps {
+  checked: boolean
+  onChange: (checked: boolean) => void
+}
+
+export function FilterFillersCheckbox({ checked, onChange }: FilterFillersCheckboxProps) {
+  const { t } = useI18n()
+  return (
+    <label className="flex cursor-pointer items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        className="size-4 rounded border-gray-300"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {t.home.filterFillers}
+    </label>
+  )
+}
+
 /* ── TTS Mode Select ── */
 
 interface TtsModeSelectProps {

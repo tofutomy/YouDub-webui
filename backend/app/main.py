@@ -432,6 +432,7 @@ def rerun_stage(task_id: str, stage_name: str) -> dict:
 
 @app.post("/api/tasks/{task_id}/rerun-single-stage/{stage_name}")
 def rerun_single_stage(task_id: str, stage_name: str) -> dict:
+    import threading
     from .stages import STAGE_NAMES
 
     task = database.get_task(task_id)
@@ -443,7 +444,13 @@ def rerun_single_stage(task_id: str, stage_name: str) -> dict:
         raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
     _ensure_runtime_ready()
     database.reset_single_stage_for_rerun(task_id, stage_name)
-    run_task_single_stage(task_id, stage_name)
+    # Run in a background thread so the HTTP response is returned immediately.
+    # Running synchronously would block the event loop for long stages (e.g. translate).
+    threading.Thread(
+        target=run_task_single_stage,
+        args=(task_id, stage_name),
+        daemon=True,
+    ).start()
     return database.get_task(task_id)
 
 

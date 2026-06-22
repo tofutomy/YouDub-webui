@@ -17,7 +17,7 @@ _FILLER_PHRASES: list[str] = sorted([
     "就是说", "怎么说", "这样子", "就是说呢", "那个那个", "这个这个",
     # Japanese
     "あのう", "ええと", "あのー", "えーと", "そうですね", "なんか",
-    "はぁ", "ふぅ",
+    "はぁ", "ふぅ", "はぁー", "うぅ", "あぁ",
 ], key=len, reverse=True)
 
 # Word-level fillers (English / romanised interjections).

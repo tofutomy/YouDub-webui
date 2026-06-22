@@ -94,6 +94,16 @@ def init_db() -> None:
             )
         # Keep openai.* settings in sync with the default provider for backward compat.
         _sync_openai_settings_from_default_provider(conn)
+        # Seed translate_concurrency from .env only if it doesn't exist yet.
+        defaults = openai_defaults()
+        conn.execute(
+            """
+            INSERT INTO settings (key, value, updated_at)
+            VALUES ('openai.translate_concurrency', ?, ?)
+            ON CONFLICT(key) DO NOTHING
+            """,
+            (defaults["translate_concurrency"], now_iso()),
+        )
         for key, value in ytdlp_defaults().items():
             conn.execute(
                 """
@@ -167,14 +177,11 @@ def _sync_openai_settings_from_default_provider(conn: sqlite3.Connection) -> Non
     ).fetchone()
     if not row:
         return
-    defaults = openai_defaults()
-    concurrency = defaults["translate_concurrency"]
     now = now_iso()
     for key, value in [
         ("openai.base_url", row["base_url"]),
         ("openai.api_key", row["api_key"]),
         ("openai.model", row["model"]),
-        ("openai.translate_concurrency", concurrency),
     ]:
         conn.execute(
             """

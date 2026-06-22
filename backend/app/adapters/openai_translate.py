@@ -13,11 +13,8 @@ from pydantic import BaseModel, Field, ValidationError
 
 from ..sources import SourceConfig
 from ._translate_prompts import (
-    BATCH_TRANSLATE_RULES,
-    CORRECTION_RULES,
     PREPROCESS_PROMPT,
-    TRANSLATE_RULES,
-    VALIDATION_RULES,
+    get_translate_rules,
 )
 from .openai_client import normalize_openai_base_url
 
@@ -181,9 +178,7 @@ def preprocess(
 
 
 def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = TRANSLATE_RULES.get(source.asr_language)
-    if rules is None:
-        rules = TRANSLATE_RULES["en"]
+    rules = get_translate_rules(source.asr_language, source.target_language)
     return rules.format(
         src_language_name=source.asr_language_name,
         summary=pre.summary or "(none)",
@@ -264,6 +259,7 @@ def translate_batch(
 
 def _translate_batch_context_chunk(
     chunk: list[str],
+    asr_language: str,
     target_language: str,
     client: OpenAI,
     model: str,
@@ -288,9 +284,7 @@ def _translate_batch_context_chunk(
         )
     # Fallback: translate each sentence individually
     log.warning("batch chunk failed after retries, falling back to per-sentence: %s", last_error)
-    system_single = TRANSLATE_RULES.get(target_language)
-    if system_single is None:
-        system_single = TRANSLATE_RULES["en"]
+    system_single = get_translate_rules(asr_language, target_language)
     system_single = system_single.format(
         src_language_name="(unknown)",
         summary="(none)", hotwords="(none)", corrections="(none)",
@@ -327,9 +321,7 @@ def translate_batch_context(
 
     _completed = completed or set()
 
-    rules = BATCH_TRANSLATE_RULES.get(source.asr_language)
-    if rules is None:
-        rules = BATCH_TRANSLATE_RULES["en"]
+    rules = get_translate_rules(source.asr_language, source.target_language, "batch")
     system = rules.format(
         src_language_name=source.asr_language_name,
         summary=pre.summary or "(none)",
@@ -366,7 +358,7 @@ def translate_batch_context(
     def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
         idx, chunk = item
         result = _translate_batch_context_chunk(
-            chunk, source.target_language, client, model, system, len(chunk),
+            chunk, source.asr_language, source.target_language, client, model, system, len(chunk),
         )
         return (idx, result)
 
@@ -395,9 +387,7 @@ def translate_batch_context(
 
 
 def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = VALIDATION_RULES.get(source.asr_language)
-    if rules is None:
-        rules = VALIDATION_RULES["en"]
+    rules = get_translate_rules(source.asr_language, source.target_language, "validation")
     return rules.format(
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
@@ -406,9 +396,7 @@ def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: Preproce
 
 
 def _correction_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
-    rules = CORRECTION_RULES.get(source.asr_language)
-    if rules is None:
-        rules = CORRECTION_RULES["en"]
+    rules = get_translate_rules(source.asr_language, source.target_language, "correction")
     return rules.format(
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),

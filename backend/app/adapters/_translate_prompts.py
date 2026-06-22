@@ -410,7 +410,26 @@ _JA_TO_ZH_CORRECTION = """你是一个专业的日译中翻译修正专家。请
 """
 
 
-TRANSLATE_RULES = {"zh": _EN_TO_ZH_RULES, "en": _ZH_TO_EN_RULES, "ja": _JA_TO_ZH_RULES}
-BATCH_TRANSLATE_RULES = {"zh": _EN_TO_ZH_BATCH_RULES, "en": _ZH_TO_EN_BATCH_RULES, "ja": _JA_TO_ZH_BATCH_RULES}
-VALIDATION_RULES = {"zh": _EN_TO_ZH_VALIDATION, "en": _ZH_TO_EN_VALIDATION, "ja": _JA_TO_ZH_VALIDATION}
-CORRECTION_RULES = {"zh": _EN_TO_ZH_CORRECTION, "en": _ZH_TO_EN_CORRECTION, "ja": _JA_TO_ZH_CORRECTION}
+_RULES: dict[tuple[str, str, str], str] = {
+    ("en", "zh", "translate"): _EN_TO_ZH_RULES,
+    ("zh", "en", "translate"): _ZH_TO_EN_RULES,
+    ("ja", "zh", "translate"): _JA_TO_ZH_RULES,
+    ("en", "zh", "batch"): _EN_TO_ZH_BATCH_RULES,
+    ("zh", "en", "batch"): _ZH_TO_EN_BATCH_RULES,
+    ("ja", "zh", "batch"): _JA_TO_ZH_BATCH_RULES,
+    ("en", "zh", "validation"): _EN_TO_ZH_VALIDATION,
+    ("zh", "en", "validation"): _ZH_TO_EN_VALIDATION,
+    ("ja", "zh", "validation"): _JA_TO_ZH_VALIDATION,
+    ("en", "zh", "correction"): _EN_TO_ZH_CORRECTION,
+    ("zh", "en", "correction"): _ZH_TO_EN_CORRECTION,
+    ("ja", "zh", "correction"): _JA_TO_ZH_CORRECTION,
+}
+
+
+def get_translate_rules(src_lang: str, dst_lang: str, kind: str = "translate") -> str:
+    """根据源语言+目标语言+用途选择翻译 prompt 模板。"""
+    key = (src_lang, dst_lang, kind)
+    rules = _RULES.get(key)
+    if rules is None:
+        raise ValueError(f"不支持的翻译方向或用途: {key}")
+    return rules

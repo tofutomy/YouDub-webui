@@ -1,7 +1,6 @@
 "use client"
 
 import Link from "next/link"
-import { useRouter } from "next/navigation"
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react"
 import { ChevronRight, Play, Upload } from "lucide-react"
 
@@ -57,7 +56,6 @@ function activeCount(tasks: TaskSummary[]) {
 }
 
 export default function Home() {
-  const router = useRouter()
   const { activeTasksText, stageLabel, statusLabel, t } = useI18n()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [youtubeUrl, setYoutubeUrl] = useState("")
@@ -111,27 +109,18 @@ export default function Home() {
     event.preventDefault()
     setError("")
     const submittedUrl = youtubeUrl.trim() || bilibiliUrl.trim()
-    const submittedPath = localPath.trim()
+    const submittedPath = localPath.trim().replace(/^["']|["']$/g, "")
     if (!submittedUrl && !localFile && !submittedPath) return
     setSubmitting(true)
     try {
-      let created
       if (localFile) {
-        created = await uploadLocalTask(localFile, config)
+        await uploadLocalTask(localFile, config)
       } else if (submittedPath) {
-        created = await createLocaldirTask(submittedPath, config)
+        await createLocaldirTask(submittedPath, config)
       } else {
-        created = await createTask(submittedUrl, config)
-      }
-      setYoutubeUrl("")
-      setBilibiliUrl("")
-      setLocalFile(null)
-      setLocalPath("")
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
+        await createTask(submittedUrl, config)
       }
       refreshTasks().catch(() => undefined)
-      router.push(`/tasks/${created.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : t.home.createError)
     } finally {

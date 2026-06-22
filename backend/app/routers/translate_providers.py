@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, HTTPException, Response
 
 from .. import database
@@ -11,7 +13,14 @@ from ..schemas import TranslateProviderCreate, TranslateProviderUpdate
 router = APIRouter(prefix="/api/translate-providers", tags=["translate-providers"])
 
 
-def _serialize_provider(p: dict) -> dict:
+def _require_provider(provider_id: str) -> dict[str, Any]:
+    provider = database.get_translate_provider(provider_id)
+    if provider is None:
+        raise HTTPException(status_code=404, detail="Provider not found.")
+    return provider
+
+
+def _serialize_provider(p: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": p["id"],
         "name": p["name"],
@@ -26,13 +35,13 @@ def _serialize_provider(p: dict) -> dict:
 
 
 @router.get("")
-def list_translate_providers() -> dict:
+def list_translate_providers() -> dict[str, Any]:
     providers = database.list_translate_providers()
     return {"providers": [_serialize_provider(p) for p in providers]}
 
 
 @router.post("", status_code=201)
-def create_translate_provider(payload: TranslateProviderCreate) -> dict:
+def create_translate_provider(payload: TranslateProviderCreate) -> dict[str, Any]:
     provider_id = database.create_translate_provider(
         name=payload.name,
         base_url=payload.base_url,
@@ -40,14 +49,12 @@ def create_translate_provider(payload: TranslateProviderCreate) -> dict:
         model=payload.model,
         is_default=payload.is_default,
     )
-    return _serialize_provider(database.get_translate_provider(provider_id))
+    return _serialize_provider(_require_provider(provider_id))
 
 
 @router.patch("/{provider_id}")
-def update_translate_provider(provider_id: str, payload: TranslateProviderUpdate) -> dict:
-    provider = database.get_translate_provider(provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found.")
+def update_translate_provider(provider_id: str, payload: TranslateProviderUpdate) -> dict[str, Any]:
+    _require_provider(provider_id)
     try:
         database.update_translate_provider(
             provider_id,
@@ -60,7 +67,7 @@ def update_translate_provider(provider_id: str, payload: TranslateProviderUpdate
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _serialize_provider(database.get_translate_provider(provider_id))
+    return _serialize_provider(_require_provider(provider_id))
 
 
 @router.delete("/{provider_id}", status_code=204)
@@ -71,10 +78,8 @@ def delete_translate_provider(provider_id: str) -> Response:
 
 
 @router.post("/{provider_id}/models")
-def list_translate_provider_models(provider_id: str) -> dict:
-    provider = database.get_translate_provider(provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found.")
+def list_translate_provider_models(provider_id: str) -> dict[str, Any]:
+    provider = _require_provider(provider_id)
     base_url = provider["base_url"]
     api_key = provider["api_key"]
     if not base_url:

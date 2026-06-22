@@ -23,8 +23,8 @@ class TaskConfig(BaseModel):
     demucs_model: str | None = None
     demucs_shifts: int | None = None
 
-    def to_db_fields(self, only_set: bool = False) -> dict[str, object]:
-        fields: dict[str, object] = {}
+    def to_db_fields(self, only_set: bool = False) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
         if only_set:
             keys = self.model_fields_set
         else:

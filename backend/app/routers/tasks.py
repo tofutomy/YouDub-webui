@@ -11,6 +11,7 @@ import shutil
 import threading
 import uuid
 from pathlib import Path
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
@@ -55,8 +56,16 @@ def _ensure_runtime_ready() -> None:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _require_task(task_id: str) -> dict[str, Any]:
+    """Fetch a task or raise HTTP 404."""
+    task = database.get_task(task_id)
+    if task is None:
+        raise HTTPException(status_code=404, detail="Task not found.")
+    return task
+
+
 @router.post("", status_code=201)
-def create_task(payload: TaskCreate) -> dict:
+def create_task(payload: TaskCreate) -> dict[str, Any]:
     """Create a task from a video URL (YouTube / Bilibili / etc.).
 
     If the same video was already submitted, the existing task is returned
@@ -74,7 +83,7 @@ def create_task(payload: TaskCreate) -> dict:
         fields = payload.config.to_db_fields(only_set=True)
         if fields:
             database.update_task(existing_id, **fields)
-        return database.get_task(existing_id)
+        return _require_task(existing_id)
 
     _ensure_runtime_ready()
     task_id = database.create_task(
@@ -83,7 +92,7 @@ def create_task(payload: TaskCreate) -> dict:
         **payload.config.to_db_fields(),
     )
     worker.enqueue(task_id)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 def _clean_upload_filename(filename: str | None) -> str:
@@ -120,7 +129,7 @@ def _save_uploaded_file(file: UploadFile, destination: Path) -> int:
 def upload_local_video(
     config: str = Form(""),
     file: UploadFile = File(...),
-) -> dict:
+) -> dict[str, Any]:
     """Upload a local video file and create a task.
 
     The ``config`` form field is a JSON-serialised ``TaskConfig``.  The
@@ -153,11 +162,11 @@ def upload_local_video(
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.post("/localdir", status_code=201)
-def create_localdir_task(payload: LocaldirTaskCreate) -> dict:
+def create_localdir_task(payload: LocaldirTaskCreate) -> dict[str, Any]:
     """Create a task from a local file path (no upload, reads in-place)."""
     file_path = payload.file_path.strip()
     if not file_path:
@@ -185,38 +194,33 @@ def create_localdir_task(payload: LocaldirTaskCreate) -> dict:
     database.create_task(url, task_id=task_id, **cfg.to_db_fields())
     database.update_task(task_id, title=source_file.stem)
     worker.enqueue(task_id)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.get("/current")
-def current_task() -> dict | None:
+def current_task() -> dict[str, Any] | None:
     return database.get_current_task()
 
 
 @router.patch("/{task_id}/config")
-def update_task_config(task_id: str, payload: TaskConfig) -> dict:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+def update_task_config(task_id: str, payload: TaskConfig) -> dict[str, Any]:
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
     fields = payload.to_db_fields(only_set=True)
     if fields:
         database.update_task(task_id, **fields)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.get("")
-def list_tasks(limit: int = 100, offset: int = 0) -> dict:
+def list_tasks(limit: int = 100, offset: int = 0) -> dict[str, Any]:
     return {"tasks": database.list_tasks(limit=limit, offset=offset), "total": database.count_tasks()}
 
 
 @router.get("/{task_id}")
-def task_detail(task_id: str) -> dict:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
-    return task
+def task_detail(task_id: str) -> dict[str, Any]:
+    return _require_task(task_id)
 
 
 def _is_inside_workfolder(path: Path) -> bool:
@@ -243,9 +247,7 @@ def _purge_task(task: dict) -> None:
 
 @router.delete("/{task_id}", status_code=204)
 def delete_task(task_id: str) -> Response:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot delete a running task.")
     _purge_task(task)
@@ -258,15 +260,13 @@ def delete_task(task_id: str) -> Response:
 
 
 @router.post("/{task_id}/rerun")
-def rerun_task(task_id: str) -> dict:
+def rerun_task(task_id: str) -> dict[str, Any]:
     """Delete the existing task and re-create it from scratch.
 
     Preserves the task's current configuration so user settings are not
     lost across reruns.
     """
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot rerun a running task.")
 
@@ -277,27 +277,23 @@ def rerun_task(task_id: str) -> dict:
     _purge_task(task)
     new_id = database.create_task(url, task_id=task_id, **preserved_config.to_db_fields())
     worker.enqueue(new_id)
-    return database.get_task(new_id)
+    return _require_task(new_id)
 
 
 @router.post("/{task_id}/resume")
-def resume_task(task_id: str) -> dict:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+def resume_task(task_id: str) -> dict[str, Any]:
+    task = _require_task(task_id)
     if task["status"] != "failed":
         raise HTTPException(status_code=409, detail="Only failed tasks can be resumed.")
     _ensure_runtime_ready()
     database.reset_failed_for_resume(task_id)
     worker.enqueue(task_id)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.post("/{task_id}/stop")
-def stop_task(task_id: str) -> dict:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+def stop_task(task_id: str) -> dict[str, Any]:
+    task = _require_task(task_id)
     status = task["status"]
     if status not in ("running", "queued"):
         raise HTTPException(
@@ -309,16 +305,14 @@ def stop_task(task_id: str) -> dict:
     # immediately so the UI reflects the change without waiting for dequeue.
     if status == "queued":
         mark_task_as_stopped(task_id, error_message=STOPPED_BEFORE_START_MESSAGE)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.post("/{task_id}/rerun-stage/{stage_name}")
-def rerun_stage(task_id: str, stage_name: str) -> dict:
+def rerun_stage(task_id: str, stage_name: str) -> dict[str, Any]:
     from ..stages import STAGE_NAMES
 
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot rerun stage of a running task.")
     if stage_name not in STAGE_NAMES:
@@ -326,16 +320,14 @@ def rerun_stage(task_id: str, stage_name: str) -> dict:
     _ensure_runtime_ready()
     database.reset_stage_for_rerun(task_id, stage_name)
     worker.enqueue(task_id)
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.post("/{task_id}/rerun-single-stage/{stage_name}")
-def rerun_single_stage(task_id: str, stage_name: str) -> dict:
+def rerun_single_stage(task_id: str, stage_name: str) -> dict[str, Any]:
     from ..stages import STAGE_NAMES
 
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot rerun stage of a running task.")
     if stage_name not in STAGE_NAMES:
@@ -349,16 +341,14 @@ def rerun_single_stage(task_id: str, stage_name: str) -> dict:
         args=(task_id, stage_name),
         daemon=True,
     ).start()
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 @router.post("/{task_id}/clear-stage/{stage_name}")
-def clear_stage_output(task_id: str, stage_name: str) -> dict:
+def clear_stage_output(task_id: str, stage_name: str) -> dict[str, Any]:
     from ..stages import STAGE_NAMES
 
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot clear output of a running task.")
     if stage_name not in STAGE_NAMES:
@@ -374,7 +364,7 @@ def clear_stage_output(task_id: str, stage_name: str) -> dict:
         last_message=None,
         error_message=None,
     )
-    return database.get_task(task_id)
+    return _require_task(task_id)
 
 
 def _clear_stage_output(task: dict, stage_name: str) -> None:
@@ -395,18 +385,14 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
 
 @router.get("/{task_id}/log", response_class=PlainTextResponse)
 def task_log(task_id: str) -> str:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    _require_task(task_id)
     path = database.log_path(task_id)
     return path.read_text(encoding="utf-8") if path.exists() else ""
 
 
 @router.get("/{task_id}/artifact/final-video")
 def final_video(task_id: str, download: bool = False) -> FileResponse:
-    task = database.get_task(task_id)
-    if not task:
-        raise HTTPException(status_code=404, detail="Task not found.")
+    task = _require_task(task_id)
     final_path = task.get("final_video_path")
     if not final_path or not Path(final_path).exists():
         raise HTTPException(status_code=404, detail="Final video is not available.")

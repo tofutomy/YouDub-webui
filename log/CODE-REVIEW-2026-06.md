@@ -183,7 +183,35 @@ else: # whisper
 
 | 编号 | 项目 | 改动 | 测试 |
 |------|------|------|------|
-| P3-16 | pyright 配置 | 新建 `pyrightconfig.json`（basic 模式 + 噪音抑制）；修复 `stages.py` 缺失 `Path` 导入 bug；前端 `tsconfig.json` 已有 `strict: true` | pyright 0 errors 0 warnings ✅ |
+| P3-16 | pyright 配置 | 新建 `pyrightconfig.json`（basic 模式 + 噪音抑制）；修复 `stages.py` 缺失 `Path` 导入 bug；前端 `tsconfig.json` 已有 `strict: true` | pyright 0 errors；全项目 21 warnings（多为历史代码），routers/db 0 warnings ✅ |
 | P3-18 | ApiError 保留 status code | 新增 `ApiError` 类，`request`/`getTaskLog`/`uploadLocalTask` 统一抛出 `ApiError`，调用方可按 status 分支处理 | lint 0/0 ✅ |
 | P3-19 | `openai_defaults()` 重复调用 | `init_db()` 中缓存为局部变量 | 216/216 ✅ |
+
+---
+
+## 🔧 审查后修复（2026-06-22 补充）
+
+### 已修复
+
+| 问题 | 位置 | 修复 | 验证 |
+|------|------|------|------|
+| `use_amp` 死代码残留 | `backend/app/db/migrations.py`、`backend/app/db/tasks.py` | 移除未使用的列迁移与白名单字段 | 216/216 ✅ |
+| 前端 `Task` 类型缺失 `filter_fillers` | `apps/web/src/lib/api.ts` | 补全类型定义 | lint 0/0 ✅ |
+| routers/db pyright warnings | `backend/app/routers/tasks.py`、`backend/app/routers/translate_providers.py`、`backend/app/task_config.py` | 新增 `_require_task()` / `_require_provider()`，统一 nullable 处理；`TaskConfig.to_db_fields()` 返回 `dict[str, Any]` | routers/db 0 errors 0 warnings ✅ |
+
+---
+
+## 📌 补充观察（简洁版）
+
+1. **文件持续膨胀**：`openai_translate.py` 804→925 行、`funasr_asr.py` 628→704 行，暂缓的 P0-3/P0-4 应尽快启动，否则拆分成本持续上升。
+2. **P0-5 可继续深化**：`tasks/[id]/page.tsx` 仍 661 行，可进一步抽取 `TaskOverviewCard`、`StagesList`、`LogCard`、`DangerZoneCard`。
+3. **`_translate_prompts.py` 435 行**：6 组 prompt 规则重复度高，可用基础模板 + 差异注入压缩。
+4. **重复错误处理**：`settings.py` 与 `translate_providers.py` 的 `list_openai_models` try/except 可抽到 `_common.py`。
+5. **正面**：`vulture` 未发现死代码；项目代码无 TODO/FIXME。
+
+### 建议优先级
+
+1. 启动 P0-3（拆分 `openai_translate.py`），同步把 `test_translation.py` 从内部符号 monkeypatch 改为接口级测试。
+2. P0-4（拆分 `funasr_asr.py`）。
+3. 深化 `page.tsx` 组件化、`settings-dialog.tsx` 抽取 provider form。
 

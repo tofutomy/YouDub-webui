@@ -9,6 +9,7 @@ import {
   deleteTranslateProvider,
   getCookieInfo,
   getFunasrSettings,
+  getOpenAISettings,
   getTranslateProviderModels,
   getTranslateProviders,
   getYtdlpSettings,
@@ -131,11 +132,11 @@ export function SettingsDialog() {
 
   useEffect(() => {
     if (!open) return
-    Promise.all([getCookieInfo(), getTranslateProviders(), getYtdlpSettings(), getFunasrSettings()])
-      .then(([cookie, providersResp, ytdlp, funasr]) => {
+    Promise.all([getCookieInfo(), getTranslateProviders(), getYtdlpSettings(), getFunasrSettings(), getOpenAISettings()])
+      .then(([cookie, providersResp, ytdlp, funasr, openai]) => {
         setSettings({
           cookie: cookie.exists ? SAVED_COOKIE_SENTINEL : "",
-          translateConcurrency: "50",
+          translateConcurrency: openai.translate_concurrency || "50",
           proxyPort: ytdlp.proxy_port,
           useVllm: (funasr.use_vllm as "auto" | "on" | "off") || "auto",
         })

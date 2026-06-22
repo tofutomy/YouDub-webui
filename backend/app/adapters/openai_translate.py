@@ -371,18 +371,40 @@ def translate_batch_context(
             cp = {str(i): merged[i] for i in range(len(merged)) if merged[i]}
             checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
 
+    failed_chunks: list[tuple[int, Exception]] = []
+
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         futures = {pool.submit(_do_chunk, c): c[0] for c in chunks}
         for future in as_completed(futures):
-            offset, chunk_translations = future.result()
+            chunk_start = futures[future]
+            try:
+                offset, chunk_translations = future.result()
+            except Exception as exc:
+                log.error("translate chunk starting at sentence %d failed: %s", chunk_start, exc)
+                failed_chunks.append((chunk_start, exc))
+                continue
             for i, t in enumerate(chunk_translations):
                 pos = offset + i
-                if pos < len(merged) and merged[pos] is None:
+                if pos < len(merged) and not merged[pos]:
                     merged[pos] = t
                     if on_progress:
                         on_progress(pos, t)
             # Real-time incremental checkpoint save after each chunk
             _save_checkpoint()
+
+    if failed_chunks:
+        _save_checkpoint()
+        succeeded = len(chunks) - len(failed_chunks)
+        log.warning(
+            "%d/%d chunks failed; %d chunks succeeded and saved to checkpoint for resume",
+            len(failed_chunks), len(chunks), succeeded,
+        )
+        raise RuntimeError(
+            f"{len(failed_chunks)}/{len(chunks)} translation chunks failed; "
+            f"{succeeded} chunks saved to checkpoint. "
+            f"Last error: {failed_chunks[-1][1]}"
+        )
+
     return [t or "" for t in merged]
 
 

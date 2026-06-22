@@ -20,8 +20,7 @@ from .pipeline import run_task, run_task_single_stage
 from .runtime_checks import validate_runtime_device
 from .sanitize import sanitize_text
 from .stops import STOPPED_BEFORE_START_MESSAGE, mark_task_as_stopped
-from .task_config import TaskConfig
-from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url, is_localdir_url, make_localdir_url
+from .youtube import LOCAL_UPLOAD_DIRECTIONS, extract_video_id, is_local_upload_url
 
 ALLOWED_VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".mkv", ".webm", ".avi", ".flv", ".wmv"}
 LOCAL_UPLOAD_CHUNK_SIZE = 1024 * 1024
@@ -36,29 +35,12 @@ def mask_secret(value: str) -> str:
 
 class TaskCreate(BaseModel):
     url: str
-    config: TaskConfig = TaskConfig()
-
-
-class LocaldirTaskCreate(BaseModel):
-    file_path: str
-    config: TaskConfig = TaskConfig()
-
-
-class TranslateProviderCreate(BaseModel):
-    name: str
-    base_url: str = ""
-    api_key: str = ""
-    model: str = ""
-    is_default: bool = False
-
-
-class TranslateProviderUpdate(BaseModel):
-    name: str | None = None
-    base_url: str | None = None
-    api_key: str = ""
-    clear_api_key: bool = False
-    model: str | None = None
-    is_default: bool | None = None
+    asr_language: str | None = None
+    target_language: str | None = None
+    add_subtitles: bool = True
+    asr_model: str | None = None
+    translate_mode: str | None = None
+    validate_translation: bool = False
 
 
 class YouTubeCookieUpdate(BaseModel):
@@ -144,13 +126,12 @@ DEFAULT_CORS_ORIGIN_REGEX = (
     r"172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|"
     r"100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.\d{1,3}){2}|"
     r"\[::1\]"
-    r"):30[08]0$"
+    r"):3000$"
 )
 
 
 def cors_origins() -> list[str]:
-    defaults = ["http://localhost:3000", "http://127.0.0.1:3000",
-                "http://localhost:3080", "http://127.0.0.1:3080"]
+    defaults = ["http://localhost:3000", "http://127.0.0.1:3000"]
     configured = os.getenv("CORS_ALLOW_ORIGINS", "")
     extra = [origin.strip() for origin in configured.split(",") if origin.strip()]
     return [*defaults, *extra]
@@ -192,7 +173,17 @@ def create_task(payload: TaskCreate) -> dict:
 
     existing_id = database.find_task_by_video_id(video_id)
     if existing_id:
-        fields = payload.config.to_db_fields(only_set=True)
+        fields: dict[str, object] = {}
+        if payload.asr_language is not None:
+            fields["asr_language"] = payload.asr_language
+        if payload.target_language is not None:
+            fields["target_language"] = payload.target_language
+        if payload.add_subtitles is not None:
+            fields["add_subtitles"] = int(payload.add_subtitles)
+        if payload.asr_model is not None:
+            fields["asr_model"] = payload.asr_model or None
+        if payload.translate_mode is not None:
+            fields["translate_mode"] = payload.translate_mode or None
         if fields:
             database.update_task(existing_id, **fields)
         return database.get_task(existing_id)
@@ -201,7 +192,12 @@ def create_task(payload: TaskCreate) -> dict:
     task_id = database.create_task(
         payload.url.strip(),
         task_id=video_id,
-        **payload.config.to_db_fields(),
+        asr_language=payload.asr_language,
+        target_language=payload.target_language,
+        add_subtitles=payload.add_subtitles,
+        asr_model=payload.asr_model,
+        translate_mode=payload.translate_mode,
+        validate_translation=payload.validate_translation,
     )
     worker.enqueue(task_id)
     return database.get_task(task_id)
@@ -239,13 +235,12 @@ def _save_uploaded_file(file: UploadFile, destination: Path) -> int:
 
 @app.post("/api/tasks/upload", status_code=201)
 def upload_local_video(
-    config: str = Form(""),
+    direction: str = Form("en-zh"),
+    add_subtitles: bool = Form(True),
+    asr_model: str = Form(""),
+    validate_translation: bool = Form(False),
     file: UploadFile = File(...),
 ) -> dict:
-    cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
-    asr_language = cfg.asr_language or "en"
-    target_language = cfg.target_language or "zh"
-    direction = f"{asr_language}-{target_language}"
     if direction not in LOCAL_UPLOAD_DIRECTIONS:
         raise HTTPException(status_code=422, detail="Unsupported local video direction.")
 
@@ -261,43 +256,18 @@ def upload_local_video(
         raise
 
     url = f"local://upload/{task_id}?direction={direction}&filename={quote(original_name)}"
+    # Parse direction into asr_language and target_language
+    asr_language, target_language = direction.split("-", 1)
     database.create_task(
         url,
         task_id=task_id,
-        **cfg.to_db_fields(),
+        asr_language=asr_language,
+        target_language=target_language,
+        add_subtitles=add_subtitles,
+        asr_model=asr_model or None,
+        validate_translation=validate_translation,
     )
     database.update_task(task_id, title=Path(original_name).stem)
-    worker.enqueue(task_id)
-    return database.get_task(task_id)
-
-
-@app.post("/api/tasks/localdir", status_code=201)
-def create_localdir_task(payload: LocaldirTaskCreate) -> dict:
-    file_path = payload.file_path.strip()
-    if not file_path:
-        raise HTTPException(status_code=422, detail="File path is required.")
-
-    source_file = Path(file_path)
-    if not source_file.is_file():
-        raise HTTPException(status_code=422, detail=f"File not found: {file_path}")
-
-    suffix = source_file.suffix.lower()
-    if suffix not in ALLOWED_VIDEO_SUFFIXES:
-        raise HTTPException(status_code=422, detail=f"Unsupported video file type: {suffix}")
-
-    cfg = payload.config
-    asr_language = cfg.asr_language or "en"
-    target_language = cfg.target_language or "zh"
-    direction = f"{asr_language}-{target_language}"
-    if direction not in LOCAL_UPLOAD_DIRECTIONS:
-        raise HTTPException(status_code=422, detail="Unsupported direction.")
-
-    _ensure_runtime_ready()
-
-    task_id = str(uuid.uuid4())
-    url = make_localdir_url(task_id, file_path, direction, filename=source_file.name)
-    database.create_task(url, task_id=task_id, **cfg.to_db_fields())
-    database.update_task(task_id, title=source_file.stem)
     worker.enqueue(task_id)
     return database.get_task(task_id)
 
@@ -307,22 +277,50 @@ def current_task() -> dict | None:
     return database.get_current_task()
 
 
+class TaskConfigUpdate(BaseModel):
+    asr_model: str | None = None
+    asr_language: str | None = None
+    target_language: str | None = None
+    add_subtitles: bool | None = None
+    translate_mode: str | None = None
+    validate_translation: bool | None = None
+
+
+def _payload_has_field(payload: BaseModel, field: str) -> bool:
+    fields_set = getattr(payload, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(payload, "__fields_set__", set())
+    return field in fields_set
+
+
 @app.patch("/api/tasks/{task_id}/config")
-def update_task_config(task_id: str, payload: TaskConfig) -> dict:
+def update_task_config(task_id: str, payload: TaskConfigUpdate) -> dict:
     task = database.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
-    fields = payload.to_db_fields(only_set=True)
+    fields: dict[str, object] = {}
+    if _payload_has_field(payload, "asr_model"):
+        fields["asr_model"] = payload.asr_model or None
+    if _payload_has_field(payload, "asr_language") and payload.asr_language is not None:
+        fields["asr_language"] = payload.asr_language
+    if _payload_has_field(payload, "target_language") and payload.target_language is not None:
+        fields["target_language"] = payload.target_language
+    if _payload_has_field(payload, "add_subtitles") and payload.add_subtitles is not None:
+        fields["add_subtitles"] = int(payload.add_subtitles)
+    if _payload_has_field(payload, "translate_mode") and payload.translate_mode is not None:
+        fields["translate_mode"] = payload.translate_mode or None
+    if _payload_has_field(payload, "validate_translation") and payload.validate_translation is not None:
+        fields["validate_translation"] = int(payload.validate_translation)
     if fields:
         database.update_task(task_id, **fields)
     return database.get_task(task_id)
 
 
 @app.get("/api/tasks")
-def list_tasks(limit: int = 100, offset: int = 0) -> dict:
-    return {"tasks": database.list_tasks(limit=limit, offset=offset), "total": database.count_tasks()}
+def list_tasks(limit: int = 100) -> dict:
+    return {"tasks": database.list_tasks(limit=limit)}
 
 
 @app.get("/api/tasks/{task_id}")
@@ -377,9 +375,8 @@ def rerun_task(task_id: str) -> dict:
 
     _ensure_runtime_ready()
     url = task["url"]
-    preserved_config = TaskConfig.from_task_dict(task)
     _purge_task(task)
-    new_id = database.create_task(url, task_id=task_id, **preserved_config.to_db_fields())
+    new_id = database.create_task(url, task_id=task_id)
     worker.enqueue(new_id)
     return database.get_task(new_id)
 
@@ -506,6 +503,7 @@ def _clear_stage_output(task: dict, stage_name: str) -> None:
         targets.append(session / "metadata" / "validation.json")
         for f in (session / "metadata").glob("validation.*.checkpoint.json"):
             targets.append(f)
+        targets.append(session / "metadata" / "validation.checkpoint.json")
     elif stage_name == "split_audio":
         vocals_dir = session / "segments" / "vocals"
         if vocals_dir.exists():
@@ -597,89 +595,6 @@ def get_openai_models(payload: OpenAIModelsRequest) -> dict:
     settings = database.get_openai_settings()
     base_url = payload.base_url.strip() or settings["base_url"]
     api_key = payload.api_key.strip() or settings["api_key"]
-    try:
-        models = list_openai_models(base_url=base_url, api_key=api_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch models: {exc}") from exc
-    return {"models": models}
-
-
-# ---------------------------------------------------------------------------
-# Translate Providers API
-# ---------------------------------------------------------------------------
-
-def _serialize_provider(p: dict) -> dict:
-    return {
-        "id": p["id"],
-        "name": p["name"],
-        "base_url": p["base_url"],
-        "api_key": p["api_key"],
-        "has_api_key": bool(p["api_key"]),
-        "model": p["model"],
-        "is_default": bool(p["is_default"]),
-        "created_at": p["created_at"],
-        "updated_at": p["updated_at"],
-    }
-
-
-@app.get("/api/translate-providers")
-def list_translate_providers() -> dict:
-    providers = database.list_translate_providers()
-    return {"providers": [_serialize_provider(p) for p in providers]}
-
-
-@app.post("/api/translate-providers", status_code=201)
-def create_translate_provider(payload: TranslateProviderCreate) -> dict:
-    provider_id = database.create_translate_provider(
-        name=payload.name,
-        base_url=payload.base_url,
-        api_key=payload.api_key,
-        model=payload.model,
-        is_default=payload.is_default,
-    )
-    return _serialize_provider(database.get_translate_provider(provider_id))
-
-
-@app.patch("/api/translate-providers/{provider_id}")
-def update_translate_provider(provider_id: str, payload: TranslateProviderUpdate) -> dict:
-    provider = database.get_translate_provider(provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found.")
-    try:
-        database.update_translate_provider(
-            provider_id,
-            name=payload.name,
-            base_url=payload.base_url,
-            api_key=payload.api_key,
-            clear_api_key=payload.clear_api_key,
-            model=payload.model,
-            is_default=payload.is_default,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return _serialize_provider(database.get_translate_provider(provider_id))
-
-
-@app.delete("/api/translate-providers/{provider_id}", status_code=204)
-def delete_translate_provider(provider_id: str) -> Response:
-    if not database.delete_translate_provider(provider_id):
-        raise HTTPException(status_code=404, detail="Provider not found.")
-    return Response(status_code=204)
-
-
-@app.post("/api/translate-providers/{provider_id}/models")
-def list_translate_provider_models(provider_id: str) -> dict:
-    provider = database.get_translate_provider(provider_id)
-    if not provider:
-        raise HTTPException(status_code=404, detail="Provider not found.")
-    base_url = provider["base_url"]
-    api_key = provider["api_key"]
-    if not base_url:
-        settings = database.get_openai_settings()
-        base_url = settings["base_url"]
-        api_key = api_key or settings["api_key"]
     try:
         models = list_openai_models(base_url=base_url, api_key=api_key)
     except ValueError as exc:

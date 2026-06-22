@@ -21,21 +21,9 @@ from urllib.parse import urljoin
 import httpx
 from pydub import AudioSegment
 
-_LANG_TO_FUNASR = {
-    "zh": "中文",
-    "en": "英文",
-    "ja": "日本語",
-    "ko": "한국어",
-    "yue": "粤语",
-}
-
-_LANG_TO_OPENAI = {
-    "zh": "zh",
-    "en": "en",
-    "ja": "ja",
-    "ko": "ko",
-    "yue": "yue",
-}
+from ._time_utils import seconds_to_ms as _seconds_to_ms
+from ._lang_map import LANG_TO_REMOTE_FUNASR as _LANG_TO_FUNASR
+from ._lang_map import LANG_TO_OPENAI as _LANG_TO_OPENAI
 
 _REMOTE_MODEL_KEYWORDS = (
     "Fun-ASR",
@@ -298,16 +286,6 @@ def _model_alias(model_id: str | None) -> str:
     if "GLM-ASR" in target:
         return "glm-asr-nano"
     return target or "fun-asr-nano"
-
-
-def _seconds_to_ms(value: Any, default: int = 0) -> int:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    if number > 100000:
-        return int(round(number))
-    return int(round(number * 1000))
 
 
 def _audio_duration_ms(vocals_file: Path) -> int:

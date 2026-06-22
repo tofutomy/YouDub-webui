@@ -1,7 +1,7 @@
 "use client"
 
 import { useRouter } from "next/navigation"
-import { use, useEffect, useMemo, useState } from "react"
+import { use, useMemo, useState } from "react"
 import {
   CheckCircle2,
   Circle,
@@ -20,14 +20,11 @@ import {
 
 import {
   StageStatus,
-  Task,
   TranslateProvider,
   clearStageOutput,
   deleteTask,
   finalVideoDownloadUrl,
   finalVideoUrl,
-  getTask,
-  getTaskLog,
   getTranslateProviders,
   rerunSingleStage,
   rerunStage,
@@ -40,13 +37,16 @@ import type { StageConfig } from "@/lib/api"
 import { useI18n, STAGE_INFO } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
+import { ConfirmDialog } from "@/components/confirm-dialog"
+import { StageConfigDialog } from "@/components/stage-config-dialog"
+import { StageInfoDialog } from "@/components/stage-info-dialog"
 import {
   CONFIGURABLE_STAGES,
   DEFAULT_STAGE_CONFIG,
-  STAGE_FIELDS,
   configForStage,
   configFromTask,
 } from "@/lib/stage-config"
+import { useTaskPolling } from "@/hooks/use-task-polling"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -55,16 +55,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog"
+import { DialogTrigger } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 
@@ -102,10 +93,8 @@ function normalizeProgress(value: number | null | undefined) {
 export default function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params)
   const router = useRouter()
-  const { language, stageLabel, statusLabel, t } = useI18n()
-  const [task, setTask] = useState<Task | null>(null)
-  const [log, setLog] = useState("")
-  const [error, setError] = useState("")
+  const { stageLabel, statusLabel, t } = useI18n()
+  const { task, log, error, setTask, setLog } = useTaskPolling(id)
   const [deleteOpen, setDeleteOpen] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [deleteError, setDeleteError] = useState("")
@@ -285,28 +274,6 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   const isFailed = task?.status === "failed"
   const isStopped = task?.stop_requested === 1
 
-  useEffect(() => {
-    let cancelled = false
-    const load = async () => {
-      try {
-        const next = await getTask(id)
-        if (cancelled) return
-        setTask(next)
-        const logText = await getTaskLog(id)
-        if (cancelled) return
-        setLog(logText)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : t.task.loadError)
-      }
-    }
-    load()
-    const interval = window.setInterval(load, 2000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [id, t.task.loadError])
-
   const progress = useMemo(() => {
     if (!task?.stages?.length) return 0
     const completed = task.stages.filter((stage) => stage.status === "succeeded").length
@@ -338,7 +305,19 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <div className="flex flex-wrap items-center gap-2">
                 <Badge className={statusBadgeClass(task?.status)}>{statusLabel(task?.status)}</Badge>
                 {isActive ? (
-                  <Dialog open={stopOpen} onOpenChange={setStopOpen}>
+                  <ConfirmDialog
+                    open={stopOpen}
+                    onOpenChange={setStopOpen}
+                    title={t.task.stopTitle}
+                    description={t.task.stopDescription}
+                    confirmLabel={t.task.confirmStop}
+                    busyLabel={t.task.stopping}
+                    busy={stopping}
+                    error={stopError}
+                    variant="destructive"
+                    confirmIcon={<StopCircle className="size-4" />}
+                    onConfirm={handleStop}
+                  >
                     <DialogTrigger
                       render={
                         <Button variant="destructive" size="sm">
@@ -347,29 +326,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                         </Button>
                       }
                     />
-                    <DialogContent>
-                      <DialogHeader>
-                        <DialogTitle>{t.task.stopTitle}</DialogTitle>
-                        <DialogDescription>
-                          {t.task.stopDescription}
-                        </DialogDescription>
-                      </DialogHeader>
-                      {stopError ? (
-                        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                          {stopError}
-                        </div>
-                      ) : null}
-                      <DialogFooter>
-                        <DialogClose render={<Button variant="outline" disabled={stopping} />}>
-                          {t.common.cancel}
-                        </DialogClose>
-                        <Button variant="destructive" onClick={handleStop} disabled={stopping}>
-                          {stopping ? <Loader2 className="size-4 animate-spin" /> : <StopCircle className="size-4" />}
-                          {stopping ? t.task.stopping : t.task.confirmStop}
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
+                  </ConfirmDialog>
                 ) : null}
               </div>
             </div>
@@ -559,149 +516,62 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               </div>
             ) : null}
 
-            <Dialog open={rerunStageOpen} onOpenChange={setRerunStageOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.task.rerunStageTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.task.rerunStageDescription}
-                  </DialogDescription>
-                </DialogHeader>
-                {rerunStageError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {rerunStageError}
-                  </div>
-                ) : null}
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" disabled={rerunStaging} />}>
-                    {t.common.cancel}
-                  </DialogClose>
-                  <Button onClick={handleRerunStage} disabled={rerunStaging}>
-                    {rerunStaging ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
-                    {rerunStaging ? t.task.rerunningStage : t.task.confirmRerun}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <ConfirmDialog
+              open={rerunStageOpen}
+              onOpenChange={setRerunStageOpen}
+              title={t.task.rerunStageTitle}
+              description={t.task.rerunStageDescription}
+              confirmLabel={t.task.confirmRerun}
+              busyLabel={t.task.rerunningStage}
+              busy={rerunStaging}
+              error={rerunStageError}
+              confirmIcon={<RotateCw className="size-4" />}
+              onConfirm={handleRerunStage}
+            />
 
-            <Dialog open={rerunSingleOpen} onOpenChange={setRerunSingleOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.task.rerunSingleStageTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.task.rerunSingleStageDescription}
-                  </DialogDescription>
-                </DialogHeader>
-                {rerunSingleError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {rerunSingleError}
-                  </div>
-                ) : null}
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" disabled={rerunSingleIng} />}>
-                    {t.common.cancel}
-                  </DialogClose>
-                  <Button onClick={handleRerunSingleStage} disabled={rerunSingleIng}>
-                    {rerunSingleIng ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
-                    {rerunSingleIng ? t.task.rerunningSingleStage : t.task.confirmRerun}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <ConfirmDialog
+              open={rerunSingleOpen}
+              onOpenChange={setRerunSingleOpen}
+              title={t.task.rerunSingleStageTitle}
+              description={t.task.rerunSingleStageDescription}
+              confirmLabel={t.task.confirmRerun}
+              busyLabel={t.task.rerunningSingleStage}
+              busy={rerunSingleIng}
+              error={rerunSingleError}
+              confirmIcon={<RotateCw className="size-4" />}
+              onConfirm={handleRerunSingleStage}
+            />
 
-            <Dialog open={clearStageOpen} onOpenChange={setClearStageOpen}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.task.clearStageTitle}</DialogTitle>
-                  <DialogDescription>
-                    {t.task.clearStageDescription}
-                  </DialogDescription>
-                </DialogHeader>
-                {clearStageError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {clearStageError}
-                  </div>
-                ) : null}
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" disabled={clearingStage} />}>
-                    {t.common.cancel}
-                  </DialogClose>
-                  <Button variant="destructive" onClick={handleClearStage} disabled={clearingStage}>
-                    {clearingStage ? <Loader2 className="size-4 animate-spin" /> : <Eraser className="size-4" />}
-                    {clearingStage ? t.common.loading : t.task.clearStage}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <ConfirmDialog
+              open={clearStageOpen}
+              onOpenChange={setClearStageOpen}
+              title={t.task.clearStageTitle}
+              description={t.task.clearStageDescription}
+              confirmLabel={t.task.clearStage}
+              busyLabel={t.common.loading}
+              busy={clearingStage}
+              error={clearStageError}
+              variant="destructive"
+              confirmIcon={<Eraser className="size-4" />}
+              onConfirm={handleClearStage}
+            />
 
-            <Dialog open={!!infoStageTarget} onOpenChange={(open) => { if (!open) setInfoStageTarget(null) }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.task.stageInfoTitle}</DialogTitle>
-                </DialogHeader>
-                {infoStageTarget && STAGE_INFO[infoStageTarget] ? (
-                  <div className="space-y-3 text-sm">
-                    <div>
-                      <p className="font-medium">{stageLabel(infoStageTarget)}</p>
-                      <p className="mt-1 text-muted-foreground">{STAGE_INFO[infoStageTarget].description[language]}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground">Input</p>
-                      <pre className="mt-1 rounded bg-muted p-2 font-mono text-xs">{STAGE_INFO[infoStageTarget].input[language].split("\n").map((line, i) => <span key={i}>{line}{"\n"}</span>)}</pre>
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-muted-foreground">Output</p>
-                      <pre className="mt-1 rounded bg-muted p-2 font-mono text-xs">{STAGE_INFO[infoStageTarget].output[language].split("\n").map((line, i) => <span key={i}>{line}{"\n"}</span>)}</pre>
-                    </div>
-                  </div>
-                ) : null}
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" />}>
-                    {t.common.close}
-                  </DialogClose>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <StageInfoDialog
+              stageName={infoStageTarget}
+              onClose={() => setInfoStageTarget(null)}
+            />
 
-            <Dialog open={!!configStageTarget} onOpenChange={(open) => { if (!open) { setConfigStageTarget(null); setConfigSuccess(false) } }}>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>{t.task.stageConfigTitle}</DialogTitle>
-                </DialogHeader>
-                {configStageTarget && STAGE_FIELDS[configStageTarget] ? (
-                  <div className="space-y-4">
-                    {STAGE_FIELDS[configStageTarget].map((field, i) => (
-                      <div key={i}>
-                        {field.render({
-                          config: cfgConfig,
-                          onChange: (patch) => setCfgConfig((prev) => ({ ...prev, ...patch })),
-                          providerOptions,
-                        })}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                {configError ? (
-                  <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {configError}
-                  </div>
-                ) : null}
-                {configSuccess ? (
-                  <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
-                    {t.task.stageConfigSaved}
-                  </div>
-                ) : null}
-                <DialogFooter>
-                  <DialogClose render={<Button variant="outline" disabled={configSaving} />}>
-                    {t.common.close}
-                  </DialogClose>
-                  <Button onClick={handleSaveConfig} disabled={configSaving}>
-                    {configSaving ? <Loader2 className="size-4 animate-spin" /> : null}
-                    {configSaving ? t.common.loading : t.settings.save}
-                  </Button>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
+            <StageConfigDialog
+              stageName={configStageTarget}
+              config={cfgConfig}
+              onConfigChange={(patch) => setCfgConfig((prev) => ({ ...prev, ...patch }))}
+              providerOptions={providerOptions}
+              saving={configSaving}
+              success={configSuccess}
+              error={configError}
+              onClose={() => { setConfigStageTarget(null); setConfigSuccess(false) }}
+              onSave={handleSaveConfig}
+            />
           </CardContent>
         </Card>
 
@@ -730,7 +600,18 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               <p className="text-sm text-muted-foreground">
                 {t.task.rerunHelp}
               </p>
-              <Dialog open={rerunOpen} onOpenChange={setRerunOpen}>
+              <ConfirmDialog
+                open={rerunOpen}
+                onOpenChange={setRerunOpen}
+                title={t.task.rerunTitle}
+                description={t.task.rerunDescription}
+                confirmLabel={t.task.confirmRerun}
+                busyLabel={t.task.rerunning}
+                busy={rerunning}
+                error={rerunError}
+                confirmIcon={<RotateCw className="size-4" />}
+                onConfirm={handleRerun}
+              >
                 <DialogTrigger
                   render={
                     <Button variant="outline" disabled={!task || isActive}>
@@ -739,36 +620,26 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                     </Button>
                   }
                 />
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>{t.task.rerunTitle}</DialogTitle>
-                    <DialogDescription>
-                      {t.task.rerunDescription}
-                    </DialogDescription>
-                  </DialogHeader>
-                  {rerunError ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {rerunError}
-                    </div>
-                  ) : null}
-                  <DialogFooter>
-                    <DialogClose render={<Button variant="outline" disabled={rerunning} />}>
-                      {t.common.cancel}
-                    </DialogClose>
-                    <Button onClick={handleRerun} disabled={rerunning}>
-                      {rerunning ? <Loader2 className="size-4 animate-spin" /> : <RotateCw className="size-4" />}
-                      {rerunning ? t.task.rerunning : t.task.confirmRerun}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              </ConfirmDialog>
             </div>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-muted-foreground">
                 {t.task.deleteHelp} <code className="font-mono text-xs">workfolder/</code>
                 {t.common.sentenceEnd}
               </p>
-              <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+              <ConfirmDialog
+                open={deleteOpen}
+                onOpenChange={setDeleteOpen}
+                title={t.task.deleteTitle}
+                description={t.task.deleteDescription}
+                confirmLabel={t.task.confirmDelete}
+                busyLabel={t.task.deleting}
+                busy={deleting}
+                error={deleteError}
+                variant="destructive"
+                confirmIcon={<Trash2 className="size-4" />}
+                onConfirm={handleDelete}
+              >
                 <DialogTrigger
                   render={
                     <Button variant="destructive" disabled={!task || isActive}>
@@ -777,29 +648,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                     </Button>
                   }
                 />
-                <DialogContent>
-                  <DialogHeader>
-                    <DialogTitle>{t.task.deleteTitle}</DialogTitle>
-                    <DialogDescription>
-                      {t.task.deleteDescription}
-                    </DialogDescription>
-                  </DialogHeader>
-                  {deleteError ? (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                      {deleteError}
-                    </div>
-                  ) : null}
-                  <DialogFooter>
-                    <DialogClose render={<Button variant="outline" disabled={deleting} />}>
-                      {t.common.cancel}
-                    </DialogClose>
-                    <Button variant="destructive" onClick={handleDelete} disabled={deleting}>
-                      {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
-                      {deleting ? t.task.deleting : t.task.confirmDelete}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
+              </ConfirmDialog>
             </div>
             {isActive ? (
               <p className="text-xs text-amber-600">{t.task.runningLocked}</p>

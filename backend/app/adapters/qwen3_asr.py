@@ -19,33 +19,13 @@ import gc
 
 from pydub import AudioSegment
 
+from ._time_utils import to_ms as _to_ms
+from ._lang_map import LANG_TO_QWEN3 as _LANG_MAP
+
 logger = logging.getLogger(__name__)
 
 _MODEL = None
 _ALIGNER = None
-
-# Language code → human-readable name for Qwen3-ASR.
-_LANG_MAP = {
-    "zh": "Chinese",
-    "en": "English",
-    "ja": "Japanese",
-    "ko": "Korean",
-    "yue": "Cantonese",
-    "fr": "French",
-    "de": "German",
-    "es": "Spanish",
-    "pt": "Portuguese",
-    "ru": "Russian",
-    "ar": "Arabic",
-    "it": "Italian",
-    "th": "Thai",
-    "vi": "Vietnamese",
-    "id": "Indonesian",
-    "tr": "Turkish",
-    "hi": "Hindi",
-    "ms": "Malay",
-    "nl": "Dutch",
-}
 
 
 def _model_dir() -> str | None:
@@ -131,11 +111,6 @@ def release_model() -> None:
     except Exception:
         pass
     logger.info("Qwen3-ASR models released from GPU memory")
-
-
-def _to_ms(seconds: float) -> int:
-    return int(round(seconds * 1000))
-
 
 
 def _group_words_to_utterances(

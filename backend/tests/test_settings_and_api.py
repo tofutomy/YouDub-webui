@@ -8,6 +8,9 @@ from fastapi.testclient import TestClient
 from backend.app import config, database
 from backend.app import main
 from backend.app import worker
+from backend.app.routers import cookies as cookies_router
+from backend.app.routers import settings as settings_router
+from backend.app.routers import tasks as tasks_router
 
 
 def configure_tmp_runtime(monkeypatch, tmp_path):
@@ -15,14 +18,16 @@ def configure_tmp_runtime(monkeypatch, tmp_path):
     workfolder.mkdir()
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.sqlite")
-    monkeypatch.setattr(main, "YOUTUBE_COOKIE_PATH", tmp_path / "cookies" / "youtube.txt")
-    monkeypatch.setattr(main, "WORKFOLDER", workfolder)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite")
+    monkeypatch.setattr(config, "YOUTUBE_COOKIE_PATH", tmp_path / "cookies" / "youtube.txt")
+    monkeypatch.setattr(cookies_router, "YOUTUBE_COOKIE_PATH", tmp_path / "cookies" / "youtube.txt")
     monkeypatch.setattr(config, "WORKFOLDER", workfolder)
+    monkeypatch.setattr(tasks_router, "WORKFOLDER", workfolder)
     monkeypatch.setattr(config, "LOG_DIR", log_dir)
     monkeypatch.setattr(worker, "start", lambda runner: None)
     monkeypatch.setattr(worker, "enqueue", lambda task_id: None)
     monkeypatch.setattr(main.worker, "enqueue", lambda task_id: None)
+    monkeypatch.setattr(tasks_router.worker, "enqueue", lambda task_id: None)
     database.init_db()
 
 
@@ -536,7 +541,7 @@ def test_openai_models_use_form_key_without_leaking_it(monkeypatch, tmp_path):
         captured["api_key"] = api_key
         return ["gpt-test", "qwen-test"]
 
-    monkeypatch.setattr(main, "list_openai_models", fake_list_models)
+    monkeypatch.setattr(settings_router, "list_openai_models", fake_list_models)
     client = TestClient(main.app)
 
     response = client.post(
@@ -560,7 +565,7 @@ def test_openai_models_can_use_saved_key(monkeypatch, tmp_path):
         captured["api_key"] = api_key
         return ["saved-model"]
 
-    monkeypatch.setattr(main, "list_openai_models", fake_list_models)
+    monkeypatch.setattr(settings_router, "list_openai_models", fake_list_models)
     client = TestClient(main.app)
 
     response = client.post("/api/settings/openai/models", json={"base_url": "", "api_key": ""})
@@ -769,7 +774,7 @@ def test_create_task_rejects_local_upload_url(monkeypatch, tmp_path):
 def test_create_task_rejects_unavailable_cuda_runtime(monkeypatch, tmp_path):
     configure_tmp_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        main,
+        tasks_router,
         "validate_runtime_device",
         lambda: (_ for _ in ()).throw(RuntimeError("DEVICE=cuda is not available")),
     )

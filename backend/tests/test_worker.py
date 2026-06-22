@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import threading
 
-from backend.app import database, worker
+from backend.app import config, database, worker
 
 
 def test_worker_picks_up_pending_and_new_tasks(monkeypatch, tmp_path):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "worker.sqlite")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "worker.sqlite")
     database.init_db()
     pre_queued = [
         database.create_task(f"https://www.youtube.com/watch?v=v{i:011d}") for i in range(2)
@@ -47,7 +47,7 @@ def test_request_stop_sets_and_consumes_flag():
 
 
 def test_queued_task_marked_failed_when_stopped_before_dequeue(monkeypatch, tmp_path):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "worker-stop.sqlite")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "worker-stop.sqlite")
     database.init_db()
     task_id = database.create_task("https://www.youtube.com/watch?v=stopped")
 

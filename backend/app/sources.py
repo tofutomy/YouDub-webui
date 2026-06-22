@@ -17,7 +17,8 @@ from .youtube import (
 )
 
 
-LANG_NAMES = {"en": "English", "zh": "Simplified Chinese", "ja": "Japanese"}
+from .adapters._lang_map import LANG_NAMES
+
 DEFAULT_ASR_LANGUAGE = "en"
 DEFAULT_TARGET_LANGUAGE = "zh"
 

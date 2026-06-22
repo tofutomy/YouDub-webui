@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from backend.app import database, stops
+from backend.app import config, database, stops
 
 
 def _init_db(monkeypatch, tmp_path) -> None:
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "stops.sqlite")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "stops.sqlite")
     database.init_db()
 
 

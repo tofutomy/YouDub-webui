@@ -58,6 +58,17 @@ def consume_stop_event(task_id: str) -> bool:
     return event is not None and event.is_set()
 
 
+def cleanup_stop(task_id: str) -> None:
+    """Drop any pending stop event for a task.
+
+    Call this when a task is deleted without going through the worker loop
+    (e.g. via the delete endpoint) so the ``_stop_events`` dict doesn't
+    leak entries for tasks that will never be processed.
+    """
+    with _lock:
+        _stop_events.pop(task_id, None)
+
+
 def _loop(runner: Callable[[str], None]) -> None:
     global _current_task_id
     while True:

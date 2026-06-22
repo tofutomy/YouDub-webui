@@ -28,6 +28,12 @@ from typing import Any, Callable
 
 from pydub import AudioSegment
 
+from ._time_utils import time_value_to_ms as _time_value_to_ms
+from ._time_utils import timestamp_pair_to_ms as _timestamp_pair_to_ms
+from ._time_utils import to_ms as _to_ms
+from ._lang_map import LANG_TO_FUNASR as _LANG_TO_FUNASR
+from ._lang_map import LANG_TO_FUNASR_VLLM as _LANG_TO_FUNASR_VLLM
+
 logger = logging.getLogger(__name__)
 
 _STANDARD_MODEL = None
@@ -56,22 +62,6 @@ _MAX_FALLBACK_CHARS = 120
 _NO_SPACE_BEFORE = set(".,!?;:%)]}\u3002\uff0c\u3001\uff01\uff1f\uff1b\uff1a")
 _NO_SPACE_AFTER = set("([{\u201c\u2018")
 _APOSTROPHES = {"'", "\u2019"}
-
-_LANG_TO_FUNASR = {
-    "zh": "zh",
-    "en": "en",
-    "ja": "ja",
-    "ko": "ko",
-    "yue": "yue",
-}
-
-_LANG_TO_FUNASR_VLLM = {
-    "zh": "中文",
-    "en": "英文",
-    "ja": "日文",
-    "ko": "韩文",
-    "yue": "粤语",
-}
 
 
 def _get_model_id() -> str:
@@ -194,20 +184,6 @@ def _load_vllm_model(model_id: str | None = None):
     return _VLLM_MODEL
 
 
-def _to_ms(seconds: float) -> int:
-    return int(round(float(seconds) * 1000))
-
-
-def _time_value_to_ms(value, default: int = 0) -> int:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return default
-    if number > 100000:
-        return int(round(number))
-    return _to_ms(number / 1000.0) if number > 1000 else _to_ms(number)
-
-
 def _clean_asr_text(text: str) -> str:
     cleaned = _SENSEVOICE_TAG.sub("", text or "")
     return re.sub(r"\s+", " ", cleaned).strip()
@@ -290,16 +266,6 @@ def _fallback_sentences_by_duration(text: str, duration_ms: int) -> list[dict]:
         })
         cursor = end_ms
     return utterances
-
-
-def _timestamp_pair_to_ms(ts) -> tuple[int, int] | None:
-    if isinstance(ts, dict):
-        start = ts.get("start_time", ts.get("start"))
-        end = ts.get("end_time", ts.get("end"))
-        return _time_value_to_ms(start), _time_value_to_ms(end)
-    if isinstance(ts, (list, tuple)) and len(ts) >= 2:
-        return int(round(float(ts[0]))), int(round(float(ts[1])))
-    return None
 
 
 def _is_cjk_char(char: str) -> bool:

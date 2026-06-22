@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from backend.app import database
+from backend.app import config, database
 from backend.app import pipeline
 from backend.app.pipeline import PipelineRunner
 
 
 def configure_db(monkeypatch, tmp_path):
-    monkeypatch.setattr(database, "DB_PATH", tmp_path / "test.sqlite")
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.sqlite")
     database.init_db()
 
 

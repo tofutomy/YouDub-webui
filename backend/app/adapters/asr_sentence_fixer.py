@@ -21,7 +21,7 @@ _FILLER_PHRASES: list[str] = sorted([
 
 # Word-level fillers (English / romanised interjections).
 _FILLER_WORDS: set[str] = {
-    "um", "uh", "ah", "er", "hmm", "mm", "mmm", "hm", "huh", "eh", "oh",
+    "um", "uh", "ah", "er", "hmm", "mm", "mmm", "Mmhmm", "hm", "huh", "eh", "oh",
     "ugh", "ahem", "erm", "like", "well", "so", "actually",
     "basically", "literally", "right", "okay", "yeah", "yep", "yup",
     "nope", "nah", "mhm", "pff", "tsk", "shh", "whoa", "wow",

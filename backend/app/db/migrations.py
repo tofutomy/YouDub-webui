@@ -61,10 +61,11 @@ def init_db() -> None:
             );
             """
         )
+        # Cache defaults once — used by both the provider seed and settings seed.
+        defaults = openai_defaults()
         # Seed default provider from .env only when the table is empty (first run).
         provider_count = conn.execute("SELECT COUNT(*) AS cnt FROM translate_providers").fetchone()["cnt"]
         if provider_count == 0:
-            defaults = openai_defaults()
             now = now_iso()
             conn.execute(
                 """
@@ -76,7 +77,6 @@ def init_db() -> None:
         # Keep openai.* settings in sync with the default provider for backward compat.
         _sync_openai_settings_from_default_provider(conn)
         # Seed translate_concurrency from .env only if it doesn't exist yet.
-        defaults = openai_defaults()
         conn.execute(
             """
             INSERT INTO settings (key, value, updated_at)

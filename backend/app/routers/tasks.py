@@ -8,6 +8,7 @@ video artifact.
 from __future__ import annotations
 
 import shutil
+import threading
 import uuid
 from pathlib import Path
 from urllib.parse import quote
@@ -43,6 +44,11 @@ MAX_LOCAL_UPLOAD_BYTES = int(__import__("os").getenv("LOCAL_UPLOAD_MAX_BYTES", s
 
 
 def _ensure_runtime_ready() -> None:
+    """Validate that the configured devices (CUDA / MPS / CPU) are available.
+
+    Raises HTTP 409 if a required device is missing, so the client can
+    surface the error before queueing a task that would fail at runtime.
+    """
     try:
         validate_runtime_device()
     except RuntimeError as exc:
@@ -51,11 +57,18 @@ def _ensure_runtime_ready() -> None:
 
 @router.post("", status_code=201)
 def create_task(payload: TaskCreate) -> dict:
+    """Create a task from a video URL (YouTube / Bilibili / etc.).
+
+    If the same video was already submitted, the existing task is returned
+    and its configuration is updated with any explicitly-set fields from
+    this request (dedup by video ID).
+    """
     try:
         video_id = extract_video_id(payload.url)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # Dedup: reuse the existing task for the same video.
     existing_id = database.find_task_by_video_id(video_id)
     if existing_id:
         fields = payload.config.to_db_fields(only_set=True)
@@ -108,6 +121,12 @@ def upload_local_video(
     config: str = Form(""),
     file: UploadFile = File(...),
 ) -> dict:
+    """Upload a local video file and create a task.
+
+    The ``config`` form field is a JSON-serialised ``TaskConfig``.  The
+    uploaded file is saved to ``WORKFOLDER/_uploads/<task_id>/`` and
+    automatically transcoded to h.264+aac MP4 by the pipeline.
+    """
     cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
     asr_language = cfg.asr_language or "en"
     target_language = cfg.target_language or "zh"
@@ -139,6 +158,7 @@ def upload_local_video(
 
 @router.post("/localdir", status_code=201)
 def create_localdir_task(payload: LocaldirTaskCreate) -> dict:
+    """Create a task from a local file path (no upload, reads in-place)."""
     file_path = payload.file_path.strip()
     if not file_path:
         raise HTTPException(status_code=422, detail="File path is required.")
@@ -209,6 +229,7 @@ def _is_inside_workfolder(path: Path) -> bool:
 
 
 def _purge_task(task: dict) -> None:
+    """Remove a task's session directory, log file, and database row."""
     session_path = task.get("session_path")
     if session_path:
         session_dir = Path(session_path)
@@ -238,6 +259,11 @@ def delete_task(task_id: str) -> Response:
 
 @router.post("/{task_id}/rerun")
 def rerun_task(task_id: str) -> dict:
+    """Delete the existing task and re-create it from scratch.
+
+    Preserves the task's current configuration so user settings are not
+    lost across reruns.
+    """
     task = database.get_task(task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found.")
@@ -246,6 +272,7 @@ def rerun_task(task_id: str) -> dict:
 
     _ensure_runtime_ready()
     url = task["url"]
+    # Preserve config before purging so the new task inherits user settings.
     preserved_config = TaskConfig.from_task_dict(task)
     _purge_task(task)
     new_id = database.create_task(url, task_id=task_id, **preserved_config.to_db_fields())
@@ -315,7 +342,13 @@ def rerun_single_stage(task_id: str, stage_name: str) -> dict:
         raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
     _ensure_runtime_ready()
     database.reset_single_stage_for_rerun(task_id, stage_name)
-    run_task_single_stage(task_id, stage_name)
+    # Run in a background thread so the HTTP response returns immediately.
+    # Long-running stages (e.g. translate) would otherwise block the event loop.
+    threading.Thread(
+        target=run_task_single_stage,
+        args=(task_id, stage_name),
+        daemon=True,
+    ).start()
     return database.get_task(task_id)
 
 

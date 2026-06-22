@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -80,14 +81,12 @@ def stage_outputs(stage_name: str) -> tuple[str, ...]:
     return ()
 
 
-def resolve_stage_outputs(session: "Path", stage_name: str) -> list:
+def resolve_stage_outputs(session: Path, stage_name: str) -> list[Path]:
     """Expand a stage's output patterns to concrete Paths inside ``session``.
 
     Supports ``*`` globs (e.g. ``metadata/translation.*.json``). Patterns
     without a glob are returned as-is (the file may or may not exist).
     """
-    from pathlib import Path
-
     targets: list[Path] = []
     for pattern in stage_outputs(stage_name):
         if "*" in pattern:

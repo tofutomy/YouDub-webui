@@ -1,0 +1,502 @@
+diff --git a/backend/app/adapters/openai_translate.py b/backend/app/adapters/openai_translate.py
+index eaa05f4..e68e691 100644
+--- a/backend/app/adapters/openai_translate.py
++++ b/backend/app/adapters/openai_translate.py
+@@ -3,18 +3,20 @@ from __future__ import annotations
+ import json
+ import logging
+ import re
+-import threading
+ from concurrent.futures import ThreadPoolExecutor, as_completed
+ from pathlib import Path
+ from typing import Any, Callable
+ 
+-from openai import BadRequestError, OpenAI
++from openai import OpenAI
+ from pydantic import BaseModel, Field, ValidationError
+ 
+ from ..sources import SourceConfig
+ from ._translate_prompts import (
++    BATCH_TRANSLATE_RULES,
++    CORRECTION_RULES,
+     PREPROCESS_PROMPT,
+-    get_translate_rules,
++    TRANSLATE_RULES,
++    VALIDATION_RULES,
+ )
+ from .openai_client import normalize_openai_base_url
+ 
+@@ -64,7 +66,6 @@ class ValidationBatchResult(BaseModel):
+ DEFAULT_VALIDATION_THRESHOLD = 99  # 鏍℃闃堝€硷紝璇勫垎楂樹簬璇ュ€肩殑鎵规灏嗕笉浼氳繘琛屾牎姝? DEFAULT_MAX_CORRECTIONS = 2
+ VALIDATION_CONCURRENCY = 10
+-DEFAULT_VALIDATION_BATCH_SIZE = 25  # 鏍￠獙鐢ㄦ洿澶х獥鍙ｏ紝涓庣炕璇?15)閿欏紑锛屾彁渚涗笉鍚屼笂涓嬫枃瑙嗚
+ 
+ 
+ def list_models(*, base_url: str, api_key: str) -> list[str]:
+@@ -110,24 +111,15 @@ def _extract_json(raw: str) -> dict[str, Any]:
+ 
+ 
+ def _call_json(client: OpenAI, model: str, system: str, user: str) -> dict[str, Any]:
+-    messages = [
+-        {"role": "system", "content": system},
+-        {"role": "user", "content": user},
+-    ]
+-    try:
+-        response = client.chat.completions.create(
+-            model=model,
+-            messages=messages,
+-            temperature=0.2,
+-            response_format={"type": "json_object"},
+-        )
+-    except BadRequestError:
+-        # Some providers don't support json_object response_format; retry without it.
+-        response = client.chat.completions.create(
+-            model=model,
+-            messages=messages,
+-            temperature=0.2,
+-        )
++    response = client.chat.completions.create(
++        model=model,
++        messages=[
++            {"role": "system", "content": system},
++            {"role": "user", "content": user},
++        ],
++        temperature=0.2,
++        response_format={"type": "json_object"},
++    )
+     raw = response.choices[0].message.content or "{}"
+     return _extract_json(raw)
+ 
+@@ -178,9 +170,8 @@ def preprocess(
+ 
+ 
+ def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
+-    rules = get_translate_rules(source.asr_language, source.target_language)
++    rules = TRANSLATE_RULES[source.target_language]
+     return rules.format(
+-        src_language_name=source.asr_language_name,
+         summary=pre.summary or "(none)",
+         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
+         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
+@@ -259,7 +250,6 @@ def translate_batch(
+ 
+ def _translate_batch_context_chunk(
+     chunk: list[str],
+-    asr_language: str,
+     target_language: str,
+     client: OpenAI,
+     model: str,
+@@ -284,9 +274,7 @@ def _translate_batch_context_chunk(
+         )
+     # Fallback: translate each sentence individually
+     log.warning("batch chunk failed after retries, falling back to per-sentence: %s", last_error)
+-    system_single = get_translate_rules(asr_language, target_language)
+-    system_single = system_single.format(
+-        src_language_name="(unknown)",
++    system_single = TRANSLATE_RULES[target_language].format(
+         summary="(none)", hotwords="(none)", corrections="(none)",
+         title="(unknown)", uploader="(unknown)", description="(none)",
+     )
+@@ -312,18 +300,12 @@ def translate_batch_context(
+     concurrency: int = DEFAULT_CONCURRENCY,
+     batch_size: int = DEFAULT_BATCH_SIZE,
+     on_progress: Callable[[int, str], None] | None = None,
+-    completed: set[int] | None = None,
+-    dst_list: list[str] | None = None,
+-    checkpoint_file: Path | None = None,
+ ) -> list[str]:
+     if not texts:
+         return []
+ 
+-    _completed = completed or set()
+-
+-    rules = get_translate_rules(source.asr_language, source.target_language, "batch")
++    rules = BATCH_TRANSLATE_RULES[source.target_language]
+     system = rules.format(
+-        src_language_name=source.asr_language_name,
+         summary=pre.summary or "(none)",
+         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
+         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
+@@ -333,83 +315,40 @@ def translate_batch_context(
+ 
+     half = max(1, batch_size // 2)
+     chunks: list[tuple[int, list[str]]] = []
+-    skipped = 0
+     for start in range(0, len(texts), half):
+         end = min(start + batch_size, len(texts))
+-        # Skip chunk if ALL sentences in this range are already completed
+-        if _completed and all(i in _completed for i in range(start, end)):
+-            skipped += 1
+-            continue
+         chunks.append((start, texts[start:end]))
+         if end >= len(texts):
+             break
+ 
+-    # Initialize merged from dst_list (preserving already-completed translations)
+-    if dst_list and len(dst_list) == len(texts):
+-        merged: list[str | None] = list(dst_list)
+-    else:
+-        merged = [None] * len(texts)
+-
+     log.info(
+-        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d, resumed=%d, skipped=%d)",
+-        len(texts), len(chunks), batch_size, concurrency, len(_completed), skipped,
++        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d)",
++        len(texts), len(chunks), batch_size, concurrency,
+     )
+ 
+     def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
+         idx, chunk = item
+         result = _translate_batch_context_chunk(
+-            chunk, source.asr_language, source.target_language, client, model, system, len(chunk),
++            chunk, source.target_language, client, model, system, len(chunk),
+         )
+         return (idx, result)
+ 
+-    _checkpoint_lock = threading.Lock()
+-
+-    def _save_checkpoint() -> None:
+-        if not checkpoint_file:
+-            return
+-        with _checkpoint_lock:
+-            cp = {str(i): merged[i] for i in range(len(merged)) if merged[i]}
+-            checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+-
+-    failed_chunks: list[tuple[int, Exception]] = []
+-
++    merged: list[str | None] = [None] * len(texts)
+     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
+         futures = {pool.submit(_do_chunk, c): c[0] for c in chunks}
+         for future in as_completed(futures):
+-            chunk_start = futures[future]
+-            try:
+-                offset, chunk_translations = future.result()
+-            except Exception as exc:
+-                log.error("translate chunk starting at sentence %d failed: %s", chunk_start, exc)
+-                failed_chunks.append((chunk_start, exc))
+-                continue
++            offset, chunk_translations = future.result()
+             for i, t in enumerate(chunk_translations):
+                 pos = offset + i
+-                if pos < len(merged) and not merged[pos]:
++                if pos < len(merged) and merged[pos] is None:
+                     merged[pos] = t
+                     if on_progress:
+                         on_progress(pos, t)
+-            # Real-time incremental checkpoint save after each chunk
+-            _save_checkpoint()
+-
+-    if failed_chunks:
+-        _save_checkpoint()
+-        succeeded = len(chunks) - len(failed_chunks)
+-        log.warning(
+-            "%d/%d chunks failed; %d chunks succeeded and saved to checkpoint for resume",
+-            len(failed_chunks), len(chunks), succeeded,
+-        )
+-        raise RuntimeError(
+-            f"{len(failed_chunks)}/{len(chunks)} translation chunks failed; "
+-            f"{succeeded} chunks saved to checkpoint. "
+-            f"Last error: {failed_chunks[-1][1]}"
+-        )
+-
+     return [t or "" for t in merged]
+ 
+ 
+ def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
+-    rules = get_translate_rules(source.asr_language, source.target_language, "validation")
++    rules = VALIDATION_RULES[source.target_language]
+     return rules.format(
+         summary=pre.summary or "(none)",
+         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
+@@ -418,7 +357,7 @@ def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: Preproce
+ 
+ 
+ def _correction_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
+-    rules = get_translate_rules(source.asr_language, source.target_language, "correction")
++    rules = CORRECTION_RULES[source.target_language]
+     return rules.format(
+         summary=pre.summary or "(none)",
+         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
+@@ -511,7 +450,6 @@ def validate_and_correct(
+     threshold: int = DEFAULT_VALIDATION_THRESHOLD,
+     max_corrections: int = DEFAULT_MAX_CORRECTIONS,
+     checkpoint_file: Path | None = None,
+-    progress_callback: Callable[[int, str], None] | None = None,
+ ) -> tuple[list[str], dict[str, Any]]:
+     """Validate translations in batches, then correct issues.
+ 
+@@ -524,13 +462,15 @@ def validate_and_correct(
+ 
+     client = _client(base_url, api_key)
+ 
+-    # Validation uses a larger, non-overlapping batch to provide a different
+-    # contextual view than translation (which uses batch_size=15 with overlap).
+-    validation_batch_size = DEFAULT_VALIDATION_BATCH_SIZE
++    # Split into validation batches (same size as translation batches)
++    batch_size = DEFAULT_BATCH_SIZE
++    half = max(1, batch_size // 2)
+     chunks: list[tuple[int, int]] = []  # (start, end)
+-    for start in range(0, len(texts), validation_batch_size):
+-        end = min(start + validation_batch_size, len(texts))
++    for start in range(0, len(texts), half):
++        end = min(start + batch_size, len(texts))
+         chunks.append((start, end))
++        if end >= len(texts):
++            break
+ 
+     # Load checkpoint if available
+     saved_batches: dict[int, dict[str, Any]] = {}  # batch_start -> batch_report
+@@ -540,7 +480,7 @@ def validate_and_correct(
+             for entry in cp.get("batches", []):
+                 saved_batches[entry["start"]] = entry
+             # Restore corrected dst_list entries
+-            for entry in cp.get("translations", []):
++            for entry in cp.get("corrections", []):
+                 idx = entry["idx"]
+                 if 0 <= idx < len(dst_list):
+                     dst_list[idx] = entry["dst"]
+@@ -555,7 +495,6 @@ def validate_and_correct(
+     )
+ 
+     # Validate each batch (skip already-completed ones)
+-    start_to_idx = {start: i for i, (start, _) in enumerate(chunks)}
+     batch_reports: list[dict[str, Any]] = []
+     all_issues: list[tuple[int, ValidationIssue]] = []  # (global_index, issue)
+     total_score = 0
+@@ -588,51 +527,43 @@ def validate_and_correct(
+                 source, meta, pre, client=client, model=model,
+             )
+ 
+-        _validated_so_far = len(saved_batches)
+         with ThreadPoolExecutor(max_workers=max(1, VALIDATION_CONCURRENCY)) as pool:
+-            for start, batch_result in pool.map(_validate_chunk, pending_chunks):
+-                _validated_so_far += 1
+-                if progress_callback is not None:
+-                    pct = 50 + round(_validated_so_far / max(1, len(chunks)) * 45)
+-                    progress_callback(pct, f"鏍￠獙 {_validated_so_far}/{len(chunks)} 鎵?)
+-                end = min(start + validation_batch_size, len(texts))
+-                total_score += batch_result.score
+-                batch_report = {
+-                    "start": start,
+-                    "batch_index": start_to_idx[start],
+-                    "sentences": list(range(start, end)),
+-                    "score": batch_result.score,
+-                    "issues": [],
+-                }
+-                for issue in batch_result.issues:
+-                    global_idx = start + issue.index
+-                    if 0 <= global_idx < len(dst_list):
+-                        all_issues.append((global_idx, issue))
+-                        batch_report["issues"].append({
+-                            "sentence_index": global_idx,
+-                            "type": issue.type,
+-                            "problem": issue.problem,
+-                            "suggestion": issue.suggestion,
+-                        })
+-                # Update placeholder
+-                batch_reports[start_to_idx[start]] = batch_report
+-
+-                # Save checkpoint after each batch
+-                if checkpoint_file:
+-                    _save_validation_checkpoint(checkpoint_file, batch_reports, dst_list)
++            results = list(pool.map(_validate_chunk, pending_chunks))
++
++        for start, batch_result in results:
++            end = min(start + batch_size, len(texts))
++            total_score += batch_result.score
++            batch_report = {
++                "start": start,
++                "batch_index": next(i for i, c in enumerate(chunks) if c[0] == start),
++                "sentences": list(range(start, end)),
++                "score": batch_result.score,
++                "issues": [],
++            }
++            for issue in batch_result.issues:
++                global_idx = start + issue.index
++                if 0 <= global_idx < len(dst_list):
++                    all_issues.append((global_idx, issue))
++                    batch_report["issues"].append({
++                        "sentence_index": global_idx,
++                        "type": issue.type,
++                        "problem": issue.problem,
++                        "suggestion": issue.suggestion,
++                    })
++            # Update placeholder
++            batch_idx = next(i for i, c in enumerate(chunks) if c[0] == start)
++            batch_reports[batch_idx] = batch_report
++
++            # Save checkpoint after each batch
++            if checkpoint_file:
++                _save_validation_checkpoint(checkpoint_file, batch_reports, dst_list)
+ 
+     overall_score = total_score // max(1, len(chunks))
+ 
+     # Correct issues for batches below threshold
+     corrected_count = 0
+-    if progress_callback is not None:
+-        progress_callback(95, f"鏍￠獙瀹屾垚锛宻core={overall_score}锛屼慨姝ｄ腑鈥?)
+-    correctable = [
+-        (idx, issue)
+-        for idx, issue in all_issues
+-        if any(br is not None and idx in br.get("sentences", []) and br["score"] < threshold
+-               for br in batch_reports)
+-    ]
++    correctable = [(idx, issue) for idx, issue in all_issues
++                   if batch_reports[next(i for i, c in enumerate(chunks) if c[0] <= idx < c[1])]["score"] < threshold]
+ 
+     # Limit corrections per sentence
+     seen_indices: dict[int, int] = {}
+@@ -652,9 +583,6 @@ def validate_and_correct(
+             dst_list[idx] = corrected
+             corrected_count += 1
+ 
+-    if progress_callback is not None:
+-        progress_callback(100, f"鏍￠獙淇瀹屾垚 (score={overall_score}, corrected={corrected_count})")
+-
+     validation_report = {
+         "overall_score": overall_score,
+         "batches": batch_reports,
+@@ -668,18 +596,18 @@ def _save_validation_checkpoint(
+     batch_reports: list[dict[str, Any]],
+     dst_list: list[str],
+ ) -> None:
+-    """Save validation checkpoint: completed batches + current translations."""
+-    translations = []
++    """Save validation checkpoint: completed batches + corrected translations."""
++    corrections = []
+     for report in batch_reports:
+         if report is None:
+             continue
+         for issue in report.get("issues", []):
+             idx = issue["sentence_index"]
+             if 0 <= idx < len(dst_list):
+-                translations.append({"idx": idx, "dst": dst_list[idx]})
++                corrections.append({"idx": idx, "dst": dst_list[idx]})
+     cp = {
+         "batches": [r for r in batch_reports if r is not None],
+-        "translations": translations,
++        "corrections": corrections,
+     }
+     checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+     log.info("validation checkpoint saved: %d batches", len(cp["batches"]))
+@@ -733,7 +661,6 @@ def translate_asr(
+     session: Path,
+     settings: dict[str, str],
+     source: SourceConfig,
+-    progress_callback: Callable[[int, str], None] | None = None,
+ ) -> Path:
+     output_file = session / "metadata" / f"translation.{source.target_language}.json"
+     fix_file = session / "metadata" / f"translation.fix.{source.target_language}.json"
+@@ -774,18 +701,6 @@ def translate_asr(
+         mode = "sentence"
+     concurrency = _concurrency_from(settings)
+ 
+-    validation_enabled = (settings.get("validation_enabled") or "").strip().lower() in ("1", "true", "on")
+-    # Validation is optional and time-consuming; cap translation progress at 50% when enabled.
+-    _translate_cap = 50 if validation_enabled else 100
+-    _total = len(texts)
+-
+-    def _report_translate(completed_count: int, first_sentence: str = "") -> None:
+-        if progress_callback is None or _total == 0:
+-            return
+-        pct = round(completed_count / _total * _translate_cap)
+-        preview = (first_sentence[:30] + "鈥?) if len(first_sentence) > 30 else first_sentence
+-        progress_callback(pct, f"宸茬炕璇?{completed_count}/{_total} 鍙?| {preview}")
+-
+     # --- Phase 1: Translate (skip if output already exists) ---
+     if not output_file.exists():
+         dst_list: list[str] = [""] * len(texts)
+@@ -803,36 +718,31 @@ def translate_asr(
+             except Exception as exc:
+                 log.warning("failed to load checkpoint, starting fresh: %s", exc)
+ 
++        def _save_checkpoint() -> None:
++            cp = {str(i): dst_list[i] for i in completed if dst_list[i]}
++            checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
++            log.info("checkpoint saved: %d/%d sentences", len(completed), len(texts))
++
+         def _on_progress(idx: int, result: str) -> None:
+             dst_list[idx] = result
+             completed.add(idx)
+-            _first = next((s for s in dst_list if s), "")
+-            _report_translate(len(completed), _first)
+-
+-        if mode == "batch":
+-            log.info("translate mode=batch")
+-            # translate_batch_context handles checkpoint saving internally per chunk;
+-            # completed/dst_list are passed to skip already-translated sentences.
+-            translate_batch_context(
+-                texts, source, meta, pre, **api, concurrency=concurrency,
+-                on_progress=_on_progress,
+-                completed=completed,
+-                dst_list=dst_list,
+-                checkpoint_file=checkpoint_file,
+-            )
+-        else:
+-            log.info("translate mode=sentence")
+-            try:
++
++        try:
++            if mode == "batch":
++                log.info("translate mode=batch")
++                translate_batch_context(
++                    texts, source, meta, pre, **api, concurrency=concurrency,
++                    on_progress=_on_progress,
++                )
++            else:
++                log.info("translate mode=sentence")
+                 translate_batch(
+                     texts, source, meta, pre, **api, concurrency=concurrency,
+                     on_progress=_on_progress,
+                 )
+-            except Exception:
+-                # sentence mode still uses legacy exception-based checkpoint save
+-                cp = {str(i): dst_list[i] for i in completed if dst_list[i]}
+-                checkpoint_file.write_text(json.dumps(cp, ensure_ascii=False), encoding="utf-8")
+-                log.info("checkpoint saved: %d/%d sentences", len(completed), len(texts))
+-                raise
++        except Exception:
++            _save_checkpoint()
++            raise
+ 
+         # Translation done 鈥?write output and delete checkpoint
+         _write_translation(output_file, texts, dst_list, utterances, source)
+@@ -841,9 +751,9 @@ def translate_asr(
+     else:
+         log.info("translation file exists, skipping: %s", output_file.name)
+         dst_list = [item["dst"] for item in json.loads(output_file.read_text(encoding="utf-8"))["translation"]]
+-        _report_translate(_total)
+ 
+     # --- Phase 2: Validate and correct (resumable, optional) ---
++    validation_enabled = (settings.get("validation_enabled") or "").strip().lower() in ("1", "true", "on")
+     if validation_enabled:
+         if fix_file.exists():
+             log.info("validation fix file already exists, skipping: %s", fix_file.name)
+@@ -859,18 +769,12 @@ def translate_asr(
+                 max_corrections = max(0, int(raw_max))
+ 
+             log.info("validation enabled: threshold=%d, max_corrections=%d", threshold, max_corrections)
+-
+-            def _report_validation(pct_50_100: int, msg: str) -> None:
+-                if progress_callback is not None:
+-                    progress_callback(pct_50_100, msg)
+-
+             dst_list, validation_report = validate_and_correct(
+                 texts, dst_list, source, meta, pre,
+                 **api,
+                 threshold=threshold,
+                 max_corrections=max_corrections,
+                 checkpoint_file=validation_checkpoint,
+-                progress_callback=_report_validation,
+             )
+             # Save validation report
+             val_file = session / "metadata" / "validation.json"
+@@ -892,8 +796,6 @@ def translate_asr(
+             validation_checkpoint.unlink(missing_ok=True)
+ 
+     _generate_srt_if_needed(session, source.target_language)
+-    if progress_callback is not None:
+-        progress_callback(100, "缈昏瘧瀹屾垚")
+     return get_translation_file(session, source.target_language)
+ 
+ 

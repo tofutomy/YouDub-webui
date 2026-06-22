@@ -155,7 +155,7 @@ else: # whisper
 
 | 编号 | 项目 | 改动 | 测试 |
 |------|------|------|------|
-| P0-1 | 拆分 `main.py` | 712→55 行，端点分散到 `routers/{tasks,cookies,settings,translate_providers}.py` + `schemas.py` + `routers/_common.py` | 216/216 ✅ |
+| P0-1 | 拆分 `main.py` | 633→71 行，端点分散到 `routers/{tasks,cookies,settings,translate_providers}.py` + `schemas.py` + `routers/_common.py`；`include_router()` 接入；`rerun_single_stage` 加后台线程；`_clear_stage_output` 使用 `resolve_stage_outputs()` | 216/216 ✅ |
 | P0-2 | 拆分 `database.py` | 587→17 行 facade，实现移到 `db/{connection,migrations,tasks,settings,translate_providers}.py` | 216/216 ✅ |
 | P0-5 | 拆分 `tasks/[id]/page.tsx` | 812→660 行，抽取 `useTaskPolling` hook + `ConfirmDialog`/`StageInfoDialog`/`StageConfigDialog` 组件 | lint 0/0 ✅ |
 | P1-7 | 抽取时间转换工具 | 新建 `adapters/_time_utils.py`，`funasr_asr`/`remote_funasr_asr`/`qwen3_asr` 复用 | 216/216 ✅ |
@@ -173,10 +173,17 @@ else: # whisper
 | P0-4 | 拆分 `funasr_asr.py`（628行） | 同上，`test_funasr_asr.py` 508 行深度依赖内部符号 |
 | P0-6 | 拆分 `settings-dialog.tsx` | provider 表单抽取需传递大量回调 props，收益有限（~100行） |
 
-### 未做（P1-9 / P2-11 / P2-15 / P3）
+### 未做（P1-9 / P2-11 / P2-15）
 
 - **P1-9** 句子切分逻辑抽取：3 个适配器的断句逻辑差异较大（CJK vs 空格分隔 vs 字符级对齐），强行统一可能引入回归，建议观察后再做
 - **P2-11** ASR 路由 strategy 模式：当前 if-elif 仅 3 分支，收益不高
 - **P2-15** 标准库 import 提到顶部：小改动，可随手做
-- **P3** 静态类型检查 / i18n 拆分 / ApiError：工程化补强，非紧急
+
+### P3 已完成
+
+| 编号 | 项目 | 改动 | 测试 |
+|------|------|------|------|
+| P3-16 | pyright 配置 | 新建 `pyrightconfig.json`（basic 模式 + 噪音抑制）；修复 `stages.py` 缺失 `Path` 导入 bug；前端 `tsconfig.json` 已有 `strict: true` | pyright 0 errors 0 warnings ✅ |
+| P3-18 | ApiError 保留 status code | 新增 `ApiError` 类，`request`/`getTaskLog`/`uploadLocalTask` 统一抛出 `ApiError`，调用方可按 status 分支处理 | lint 0/0 ✅ |
+| P3-19 | `openai_defaults()` 重复调用 | `init_db()` 中缓存为局部变量 | 216/216 ✅ |
 

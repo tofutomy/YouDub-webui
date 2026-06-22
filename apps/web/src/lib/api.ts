@@ -1,3 +1,16 @@
+/**
+ * YouDub REST API client.
+ *
+ * Every exported function maps 1-to-1 to a backend endpoint defined in
+ * ``backend/app/routers/``.  Errors are thrown as ``ApiError`` instances
+ * that preserve the HTTP status code for upstream handling.
+ */
+
+// ---------------------------------------------------------------------------
+// API base URL — resolved from NEXT_PUBLIC_API_BASE_URL (client + server)
+// or defaults to the FastAPI dev server at 127.0.0.1:8000.
+// ---------------------------------------------------------------------------
+
 function configuredApiBase(): string {
   const configured = process.env.NEXT_PUBLIC_API_BASE_URL?.trim()
   if (configured) return configured.replace(/\/$/, "")
@@ -7,6 +20,30 @@ function configuredApiBase(): string {
 }
 
 export const API_BASE = configuredApiBase()
+
+// ---------------------------------------------------------------------------
+// Error types
+// ---------------------------------------------------------------------------
+
+/**
+ * An API error that preserves the HTTP status code.
+ *
+ * Callers can inspect ``status`` to distinguish between e.g. 409 (conflict —
+ * task is running) and 404 (not found) without parsing the message string.
+ */
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message)
+    this.name = "ApiError"
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Domain types — mirror the Pydantic models returned by the backend.
+// ---------------------------------------------------------------------------
 
 export type StageStatus = "pending" | "running" | "succeeded" | "failed"
 export type TaskStatus = "queued" | "running" | "succeeded" | "failed"
@@ -106,6 +143,12 @@ export type StageConfig = {
   demucs_shifts: number
 }
 
+/**
+ * Low-level HTTP helper.
+ *
+ * Throws an ``ApiError`` (with ``status``) on non-2xx responses so callers
+ * can branch on the status code when needed.
+ */
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
     ...options,
@@ -117,7 +160,10 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body.detail || `Request failed: ${response.status}`)
+    throw new ApiError(
+      body.detail || `Request failed: ${response.status}`,
+      response.status,
+    )
   }
   if (response.status === 204) {
     return undefined as T
@@ -145,7 +191,7 @@ export function getCurrentTask() {
 export async function getTaskLog(taskId: string): Promise<string> {
   const response = await fetch(`${API_BASE}/api/tasks/${taskId}/log`, { cache: "no-store" })
   if (!response.ok) {
-    throw new Error(`Failed to load log: ${response.status}`)
+    throw new ApiError(`Failed to load log: ${response.status}`, response.status)
   }
   return response.text()
 }
@@ -212,7 +258,7 @@ export async function uploadLocalTask(file: File, config: StageConfig) {
   })
   if (!response.ok) {
     const body = await response.json().catch(() => ({}))
-    throw new Error(body.detail || `Request failed: ${response.status}`)
+    throw new ApiError(body.detail || `Request failed: ${response.status}`, response.status)
   }
   return response.json() as Promise<Task>
 }

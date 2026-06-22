@@ -81,6 +81,10 @@ const messages: Record<UiLanguage, Messages> = {
       empty: "No tasks yet. Submit a URL, upload a file, or enter a local path above to start.",
       loadError: "Failed to load tasks",
       createError: "Failed to create task",
+      paginationPrev: "Previous",
+      paginationNext: "Next",
+      paginationTotal: "Total {n} tasks",
+      paginationPageInfo: "Page {current}/{total}",
       separateModeLabel: "Separation mode",
       separateModeBalanced: "Balanced (default)",
       separateModeHighQuality: "High quality",
@@ -269,6 +273,10 @@ const messages: Record<UiLanguage, Messages> = {
       empty: "暂无任务。输入链接、上传文件或输入本地路径后即可开始。",
       loadError: "加载任务失败",
       createError: "创建任务失败",
+      paginationPrev: "上一页",
+      paginationNext: "下一页",
+      paginationTotal: "共 {n} 条任务",
+      paginationPageInfo: "第 {current}/{total} 页",
       separateModeLabel: "分离模式",
       separateModeBalanced: "均衡（默认）",
       separateModeHighQuality: "高精度",
@@ -464,6 +472,8 @@ type LanguageContextValue = {
   loadedModelsText: (count: number) => string
   statusLabel: (status?: string | null) => string
   stageLabel: (name?: string | null, fallback?: string | null) => string
+  paginationTotalText: (n: number) => string
+  paginationPageInfoText: (current: number, total: number) => string
 }
 
 const LanguageContext = createContext<LanguageContextValue | null>(null)
@@ -514,6 +524,10 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
         if (fallback && fallback in t.stages) return t.stages[fallback as keyof typeof t.stages]
         return fallback || name || t.common.waiting
       },
+      paginationTotalText: (n) =>
+        t.home.paginationTotal.replace("{n}", String(n)),
+      paginationPageInfoText: (current, total) =>
+        t.home.paginationPageInfo.replace("{current}", String(current)).replace("{total}", String(total)),
     }
   }, [language])
 

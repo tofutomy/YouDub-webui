@@ -150,8 +150,8 @@ export async function getTaskLog(taskId: string): Promise<string> {
   return response.text()
 }
 
-export function listTasks(limit = 100) {
-  return request<{ tasks: TaskSummary[] }>(`/api/tasks?limit=${limit}`)
+export function listTasks(limit = 10, offset = 0) {
+  return request<{ tasks: TaskSummary[]; total: number }>(`/api/tasks?limit=${limit}&offset=${offset}`)
 }
 
 export function getTask(taskId: string) {

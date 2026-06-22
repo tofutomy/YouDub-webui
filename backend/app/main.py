@@ -321,8 +321,8 @@ def update_task_config(task_id: str, payload: TaskConfig) -> dict:
 
 
 @app.get("/api/tasks")
-def list_tasks(limit: int = 100) -> dict:
-    return {"tasks": database.list_tasks(limit=limit)}
+def list_tasks(limit: int = 100, offset: int = 0) -> dict:
+    return {"tasks": database.list_tasks(limit=limit, offset=offset), "total": database.count_tasks()}
 
 
 @app.get("/api/tasks/{task_id}")

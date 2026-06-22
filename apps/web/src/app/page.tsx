@@ -31,7 +31,6 @@ import {
 } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 
 const CREATE_SECTION_STAGES = ["separate", "translate", "asr", "asr_fix", "tts", "merge_video"] as const
@@ -55,8 +54,20 @@ function activeCount(tasks: TaskSummary[]) {
   return tasks.filter((t) => isActive(t.status)).length
 }
 
+function getPageNumbers(current: number, totalPages: number): (number | "...")[] {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
+  const pages: (number | "...")[] = [1]
+  if (current > 3) pages.push("...")
+  const start = Math.max(2, current - 1)
+  const end = Math.min(totalPages - 1, current + 1)
+  for (let i = start; i <= end; i++) pages.push(i)
+  if (current < totalPages - 2) pages.push("...")
+  pages.push(totalPages)
+  return pages
+}
+
 export default function Home() {
-  const { activeTasksText, stageLabel, statusLabel, t } = useI18n()
+  const { activeTasksText, stageLabel, statusLabel, t, paginationTotalText, paginationPageInfoText } = useI18n()
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [bilibiliUrl, setBilibiliUrl] = useState("")
@@ -67,38 +78,39 @@ export default function Home() {
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const pageSize = 10
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
 
   function updateConfig(patch: Partial<StageConfig>) {
     setConfig((prev) => ({ ...prev, ...patch }))
   }
 
-  async function refreshTasks() {
-    const { tasks: list } = await listTasks()
-    setTasks(list)
-  }
-
   useEffect(() => {
     let cancelled = false
 
-    const loadTasks = async () => {
+    const loadPage = async (p: number) => {
+      const offset = (p - 1) * pageSize
       try {
-        const { tasks: list } = await listTasks()
-        if (!cancelled) setTasks(list)
+        const { tasks: list, total: t } = await listTasks(pageSize, offset)
+        if (!cancelled) { setTasks(list); setTotal(t) }
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : t.home.loadError)
       }
     }
 
-    loadTasks()
+    loadPage(page)
     getTranslateProviders()
       .then((resp) => { if (!cancelled) setProviderOptions(resp.providers) })
       .catch(() => {})
-    const interval = window.setInterval(loadTasks, 2000)
+    if (page !== 1) return () => { cancelled = true }
+
+    const interval = window.setInterval(() => loadPage(1), 2000)
     return () => {
       cancelled = true
       window.clearInterval(interval)
     }
-  }, [t.home.loadError])
+  }, [page, t.home.loadError])
 
   function selectLocalFile(event: ChangeEvent<HTMLInputElement>) {
     setError("")
@@ -120,7 +132,10 @@ export default function Home() {
       } else {
         await createTask(submittedUrl, config)
       }
-      refreshTasks().catch(() => undefined)
+      const { tasks: list, total: t } = await listTasks(pageSize, 0)
+      setTasks(list)
+      setTotal(t)
+      setPage(1)
     } catch (err) {
       setError(err instanceof Error ? err.message : t.home.createError)
     } finally {
@@ -129,6 +144,7 @@ export default function Home() {
   }
 
   const queued = activeCount(tasks)
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const hasUrl = Boolean(youtubeUrl.trim() || bilibiliUrl.trim())
   const hasLocalFile = Boolean(localFile)
   const hasLocalPath = Boolean(localPath.trim())
@@ -246,7 +262,7 @@ export default function Home() {
 
         <Card>
           <CardHeader>
-            <CardTitle>{t.home.taskHistory} ({tasks.length})</CardTitle>
+            <CardTitle>{t.home.taskHistory} ({total})</CardTitle>
           </CardHeader>
           <CardContent className="px-0">
             {tasks.length === 0 ? (
@@ -254,32 +270,70 @@ export default function Home() {
                 {t.home.empty}
               </div>
             ) : (
-              <ScrollArea className="max-h-[70dvh]">
-                <ul className="flex flex-col">
-                  {tasks.map((item) => (
-                    <li key={item.id} className="border-b border-border/60 last:border-b-0">
-                      <Link
-                        href={`/tasks/${item.id}`}
-                        className="flex w-full items-center gap-3 px-6 py-3 text-sm transition-colors hover:bg-muted/60"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-left font-medium text-zinc-900">
-                            {item.title || shortUrl(item.url)}
-                          </p>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                            <Badge className={statusBadgeClass(item.status)}>{statusLabel(item.status)}</Badge>
-                            <span>{formatTime(item.created_at)}</span>
-                            {isActive(item.status) && item.current_stage ? (
-                              <span>· {stageLabel(item.current_stage)}</span>
-                            ) : null}
-                          </div>
+              <ul className="flex flex-col">
+                {tasks.map((item) => (
+                  <li key={item.id} className="border-b border-border/60 last:border-b-0">
+                    <Link
+                      href={`/tasks/${item.id}`}
+                      className="flex w-full items-center gap-3 px-6 py-3 text-sm transition-colors hover:bg-muted/60"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-left font-medium text-zinc-900">
+                          {item.title || shortUrl(item.url)}
+                        </p>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                          <Badge className={statusBadgeClass(item.status)}>{statusLabel(item.status)}</Badge>
+                          <span>{formatTime(item.created_at)}</span>
+                          {isActive(item.status) && item.current_stage ? (
+                            <span>· {stageLabel(item.current_stage)}</span>
+                          ) : null}
                         </div>
-                        <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              </ScrollArea>
+                      </div>
+                      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-center gap-1 border-t border-border/60 px-6 py-3">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={page <= 1}
+                  onClick={() => setPage(page - 1)}
+                >
+                  {t.home.paginationPrev}
+                </Button>
+                {getPageNumbers(page, totalPages).map((p, i) =>
+                  p === "..." ? (
+                    <span key={`dots-${i}`} className="px-2 text-xs text-muted-foreground">...</span>
+                  ) : (
+                    <Button
+                      key={p}
+                      variant={p === page ? "default" : "ghost"}
+                      size="sm"
+                      className="min-w-[2.25rem]"
+                      onClick={() => setPage(p)}
+                    >
+                      {p}
+                    </Button>
+                  )
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={page >= totalPages}
+                  onClick={() => setPage(page + 1)}
+                >
+                  {t.home.paginationNext}
+                </Button>
+              </div>
+            )}
+            {total > 0 && (
+              <div className="px-6 py-2 text-center text-xs text-muted-foreground">
+                {paginationTotalText(total)} · {paginationPageInfoText(page, totalPages || 1)}
+              </div>
             )}
           </CardContent>
         </Card>

@@ -434,15 +434,21 @@ def latest_task_id() -> str | None:
     return row["id"] if row else None
 
 
-def list_tasks(limit: int = 100) -> list[dict[str, Any]]:
+def list_tasks(limit: int = 100, offset: int = 0) -> list[dict[str, Any]]:
     with connect() as conn:
         rows = conn.execute(
             "SELECT id, url, title, status, current_stage, final_video_path, error_message, "
             "created_at, started_at, completed_at FROM tasks "
-            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
-            (limit,),
+            "ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
+            (limit, offset),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def count_tasks() -> int:
+    with connect() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM tasks").fetchone()
+    return row[0] if row else 0
 
 
 def get_task(task_id: str) -> dict[str, Any] | None:

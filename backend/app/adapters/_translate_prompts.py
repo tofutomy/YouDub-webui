@@ -60,6 +60,7 @@ _EN_TO_ZH_RULES = """你是一个专业的中文翻译助手。请将下列{src_
 8) 数学符号：α、β、∠、[a, b] 保留符号；alpha plus beta equals angle ABC -> α + β = ∠ABC；公式写成 5 minus 2 -> 5-2、10 times 3 -> 10*3。
 9) 代码与命令。`反引号`内容保留原样；命令行、参数、JSON/YAML 键名不译。
 10) 表述强度。粗口保留力度（妈的 / 卧槽 / 我去 / 操 / 他妈的，按语境选用）；美式 so 常作语气词「嗯啊哦」，需按语境判断不要僵硬译为「所以」。
+11) 极短内容。纯数字、纯标点、纯符号等极短或无实际语义的原文，原样保留作为译文，不得省略或解释；无论输入内容多短，都必须返回完整 JSON 响应。
 
 # 输出格式（极其重要）
 - user 每次只会给一句原文，你必须返回严格的 JSON 对象：{{"dst": "<对应中文译文>"}}
@@ -93,6 +94,7 @@ Summary: {summary}
 8) Strong language. Preserve intensity. Map common Chinese curses to natural English: 卧槽 -> "holy shit" / "fuck"; 妈的 -> "damn it" / "fuck"; 傻逼 -> "idiot" / "asshole". Pick by context, do not soften.
 9) Math symbols stay literal: α, β, ∠, [a, b]. Do not expand symbols into words.
 10) Filler words and short interjections (啊, 嗯, 哦) become natural English fillers (uh, um, oh) only if needed; otherwise drop.
+11) Extremely short content. Pure numbers, pure punctuation, pure symbols, or other extremely short content with no translatable meaning should be kept as-is in the translation. You must always return a valid JSON response regardless of how short the input is.
 
 # Output format (strict)
 - The user will send exactly ONE sentence per turn. You MUST reply with a strict JSON object: {{"dst": "<the English translation>"}}
@@ -126,6 +128,7 @@ _EN_TO_ZH_BATCH_RULES = """你是一个专业的中文翻译助手。请将下�
 8) 数学符号：α、β、∠、[a, b] 保留符号；alpha plus beta equals angle ABC -> α + β = ∠ABC；公式写成 5 minus 2 -> 5-2、10 times 3 -> 10*3。
 9) 代码与命令。`反引号`内容保留原样；命令行、参数、JSON/YAML 键名不译。
 10) 表述强度。粗口保留力度（妈的 / 卧槽 / 我去 / 操 / 他妈的，按语境选用）；美式 so 常作语气词「嗯啊哦」，需按语境判断不要僵硬译为「所以」。
+11) 极短内容。纯数字、纯标点、纯符号等极短或无实际语义的原文，原样保留作为译文，不得省略或解释；无论输入内容多短，都必须返回完整 JSON 响应。
 
 # 输出格式（极其重要）
 - user 会给你多行编号的原文，你必须返回严格的 JSON 对象：{{"translations": ["<第1句中文译文>", "<第2句中文译文>", ...]}}
@@ -160,6 +163,7 @@ Summary: {summary}
 8) Strong language. Preserve intensity. Map common Chinese curses to natural English: 卧槽 -> "holy shit" / "fuck"; 妈的 -> "damn it" / "fuck"; 傻逼 -> "idiot" / "asshole". Pick by context, do not soften.
 9) Math symbols stay literal: α, β, ∠, [a, b]. Do not expand symbols into words.
 10) Filler words and short interjections (啊, 嗯, 哦) become natural English fillers (uh, um, oh) only if needed; otherwise drop.
+11) Extremely short content. Pure numbers, pure punctuation, pure symbols, or other extremely short content with no translatable meaning should be kept as-is in the translation. You must always return a valid JSON response regardless of how short the input is.
 
 # Output format (strict)
 - The user will send multiple numbered sentences. You MUST reply with a strict JSON object: {{"translations": ["<English translation of sentence 1>", "<English translation of sentence 2>", ...]}}
@@ -310,6 +314,7 @@ _JA_TO_ZH_RULES = """你是一个专业的日译中字幕翻译助手。请将�
 8) 标点与排版。使用中文标点（，。！？；：「」（））；破折号「——」**禁用**，改用逗号分句；日文中点「・」视情况改为中文顿号「、」或省略；省略号用「…」；必须使用标点。
 9) 简洁易读。避免生僻词；优先自然中文语序（日文 SOV 灵活转中文 SVO）；能口语则不堆砌书面语。
 10) 表述强度。粗口/下ネタ保留对应力度，按语境选用恰当中文（くそ→妈的/靠、ちくしょう→可恶/该死的）；性相关表述按原文直译，不软化不回避。
+11) 极短内容。纯数字、纯标点、纯符号等极短或无实际语义的原文，原样保留作为译文，不得省略或解释；无论输入内容多短，都必须返回完整 JSON 响应。
 
 # 输出格式（极其重要）
 - user 每次只会给一句日语原文，你必须返回严格的 JSON 对象：{{"dst": "<对应中文译文>"}}
@@ -343,6 +348,7 @@ _JA_TO_ZH_BATCH_RULES = """你是一个专业的日译中字幕翻译助手。�
 8) 标点与排版。使用中文标点（，。！？；：「」（））；破折号「——」**禁用**，改用逗号分句；日文中点「・」视情况改为中文顿号「、」或省略；省略号用「…」；必须使用标点。
 9) 简洁易读。避免生僻词；优先自然中文语序（日文 SOV 灵活转中文 SVO）；能口语则不堆砌书面语。
 10) 表述强度。粗口/下ネタ保留对应力度，按语境选用恰当中文（くそ→妈的/靠、ちくしょう→可恶/该死的）；性相关表述按原文直译，不软化不回避。
+11) 极短内容。纯数字、纯标点、纯符号等极短或无实际语义的原文，原样保留作为译文，不得省略或解释；无论输入内容多短，都必须返回完整 JSON 响应。
 
 # 输出格式（极其重要）
 - user 会给你多行编号的日语原文，你必须返回严格的 JSON 对象：{{"translations": ["<第1句中文译文>", "<第2句中文译文>", ...]}}

@@ -268,7 +268,20 @@ def _translate_batch_context_chunk(
     user = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
     last_error: Exception | None = None
     for attempt in range(TRANSLATE_RETRY + 1):
-        data = _call_json(client, model, system, user)
+        try:
+            data = _call_json(client, model, system, user)
+        except (ValueError, KeyError) as exc:
+            # JSON extraction failed (e.g. model returned prose instead of JSON)
+            last_error = exc
+            log.warning("batch chunk attempt %d: JSON extraction failed: %s", attempt + 1, exc)
+            # On retry, explicitly demand valid JSON output
+            user = (
+                f"You MUST reply with a valid JSON object only. "
+                f"Do NOT explain, refuse, or output any text outside JSON. "
+                f"Even if the input is just numbers or symbols, keep them as-is in the translation.\n\n"
+                + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
+            )
+            continue
         translations = data.get("translations")
         if isinstance(translations, list) and len(translations) == expected_count:
             return [_post_process(str(t), target_language, src=c) for t, c in zip(translations, chunk)]
@@ -278,7 +291,8 @@ def _translate_batch_context_chunk(
         # On retry, reinforce the count requirement
         user = (
             f"Translate exactly {expected_count} sentences. "
-            f"Return exactly {expected_count} items in the translations array.\n\n"
+            f"Return exactly {expected_count} items in the translations array. "
+            f"Do NOT explain or refuse — always output valid JSON.\n\n"
             + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
         )
     # Fallback: translate each sentence individually

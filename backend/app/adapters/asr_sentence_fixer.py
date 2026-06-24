@@ -146,6 +146,70 @@ def _filter_fillers(utterances: list[dict], log_path: Path | None = None) -> lis
     return kept
 
 
+# ---------------------------------------------------------------------------
+# Consecutive-short-utterance dedup
+# ---------------------------------------------------------------------------
+_DEDUP_MAX_TEXT_LEN = 4        # only dedup utterances with ≤ 4 chars
+_DEDUP_MAX_GAP_MS = 1000       # consecutive gap ≤ 1 s
+_DEDUP_MAX_DURATION_MS = 4000  # cap merged duration at 4 s
+
+
+def _dedup_repeated(utterances: list[dict],
+                    max_text_len: int = _DEDUP_MAX_TEXT_LEN,
+                    max_gap: int = _DEDUP_MAX_GAP_MS,
+                    max_duration: int = _DEDUP_MAX_DURATION_MS,
+                    log_path: Path | None = None) -> list[dict]:
+    """Merge consecutive identical short utterances.
+
+    When the same short text (≤ *max_text_len* chars) repeats within
+    *max_gap* ms, keep only the first occurrence and extend its end_time
+    to cover later ones (capped so the merged span ≤ *max_duration* ms).
+    """
+    if not utterances:
+        return utterances
+
+    kept: list[dict] = []
+    removed: list[dict] = []
+    prev = {**utterances[0]}
+
+    for u in utterances[1:]:
+        text = u["text"]
+        same = (text == prev["text"]
+                and len(text) <= max_text_len
+                and (u["start_time"] - prev["end_time"]) <= max_gap)
+        if same:
+            # extend prev, but cap the total duration
+            cap = prev["start_time"] + max_duration
+            prev["end_time"] = min(u["end_time"], cap)
+            removed.append({
+                "text": u["text"],
+                "start_time": u["start_time"],
+                "end_time": u["end_time"],
+            })
+        else:
+            kept.append(prev)
+            prev = {**u}
+    kept.append(prev)
+
+    if log_path and removed:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        existing: dict = {}
+        if log_path.exists():
+            try:
+                existing = json.loads(log_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        existing["dedup_removed"] = removed
+        existing["dedup_removed_count"] = len(removed)
+        existing["dedup_kept_count"] = len(kept)
+        log_path.write_text(
+            json.dumps(existing, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    return kept
+
+
 def _start_pad(idx: int, utts: list, start_pad: int, end_pad: int, min_gap: int) -> int:
     orig_start = utts[idx]["start_time"]
     if idx == 0:
@@ -230,6 +294,15 @@ def fix_asr_sentences(asr_file: Path, session: Path,
         filtered_count = before - len(new_utts)
         if not new_utts:
             raise RuntimeError("All utterances were filtered out as filler words.")
+    # --------------------------------------------
+
+    # ---- consecutive-short-utterance dedup (after filler filter) ----
+    if filter_fillers:
+        dedup_log = session / "metadata" / "filtered_sentences.json"
+        before_dedup = len(new_utts)
+        new_utts = _dedup_repeated(new_utts, log_path=dedup_log)
+        dedup_count = before_dedup - len(new_utts)
+        filtered_count += dedup_count
     # --------------------------------------------
 
     padded = _apply_padding(new_utts, duration, start_pad, end_pad)

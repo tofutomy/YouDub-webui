@@ -7,17 +7,32 @@ from typing import Callable
 from .config import COOKIE_DIR
 from .youtube import (
     is_bilibili_url,
-    is_local_en_to_zh_url,
-    is_local_ja_to_zh_url,
-    is_local_zh_to_en_url,
-    is_localdir_en_to_zh_url,
-    is_localdir_ja_to_zh_url,
-    is_localdir_zh_to_en_url,
+    is_local_url_format,
+    is_localdir_url_format,
     is_youtube_url,
+    local_upload_direction,
+    localdir_direction,
 )
 
 
 from .adapters._lang_map import LANG_NAMES
+
+LOCAL_DIRECTIONS = ["en-zh", "zh-en", "ja-zh"]
+
+
+def make_local_direction_matcher(direction: str) -> Callable[[str], bool]:
+    """Return a matcher that checks if a URL is a local upload with the given direction."""
+    def matcher(url: str) -> bool:
+        return is_local_url_format(url) and local_upload_direction(url) == direction
+    return matcher
+
+
+def make_localdir_direction_matcher(direction: str) -> Callable[[str], bool]:
+    """Return a matcher that checks if a URL is a localdir upload with the given direction."""
+    def matcher(url: str) -> bool:
+        return is_localdir_url_format(url) and localdir_direction(url) == direction
+    return matcher
+
 
 DEFAULT_ASR_LANGUAGE = "en"
 DEFAULT_TARGET_LANGUAGE = "zh"
@@ -56,63 +71,36 @@ SOURCES: list[SourceConfig] = [
         asr_language="en",
         target_language="zh",
     ),
-    SourceConfig(
-        name="local",
-        matches=is_local_en_to_zh_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="en",
-        target_language="zh",
-    ),
-    SourceConfig(
-        name="local",
-        matches=is_local_zh_to_en_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="zh",
-        target_language="en",
-    ),
-    SourceConfig(
-        name="localdir",
-        matches=is_localdir_en_to_zh_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="en",
-        target_language="zh",
-    ),
-    SourceConfig(
-        name="localdir",
-        matches=is_localdir_zh_to_en_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="zh",
-        target_language="en",
-    ),
-    SourceConfig(
-        name="local",
-        matches=is_local_ja_to_zh_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="ja",
-        target_language="zh",
-    ),
-    SourceConfig(
-        name="localdir",
-        matches=is_localdir_ja_to_zh_url,
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language="ja",
-        target_language="zh",
-    ),
-    SourceConfig(
-        name="bilibili",
-        matches=is_bilibili_url,
-        use_proxy=False,
-        cookie_filename="bilibili.txt",
-        asr_language="zh",
-        target_language="en",
-    ),
 ]
+
+# Add local and localdir entries for each direction
+for direction in LOCAL_DIRECTIONS:
+    src_lang, tgt_lang = direction.split("-")
+    SOURCES.append(SourceConfig(
+        name="local",
+        matches=make_local_direction_matcher(direction),
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language=src_lang,
+        target_language=tgt_lang,
+    ))
+    SOURCES.append(SourceConfig(
+        name="localdir",
+        matches=make_localdir_direction_matcher(direction),
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language=src_lang,
+        target_language=tgt_lang,
+    ))
+
+SOURCES.append(SourceConfig(
+    name="bilibili",
+    matches=is_bilibili_url,
+    use_proxy=False,
+    cookie_filename="bilibili.txt",
+    asr_language="zh",
+    target_language="en",
+))
 
 
 def detect_source(url: str) -> SourceConfig:

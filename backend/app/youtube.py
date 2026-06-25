@@ -88,6 +88,11 @@ def is_local_upload_url(url: str) -> bool:
     return bool(local_upload_task_id(url)) and local_upload_direction(url) in LOCAL_UPLOAD_DIRECTIONS
 
 
+def is_local_url_format(url: str) -> bool:
+    """Check if URL is a local upload (any direction)."""
+    return bool(local_upload_task_id(url))
+
+
 def is_local_en_to_zh_url(url: str) -> bool:
     return is_local_upload_url(url) and local_upload_direction(url) == "en-zh"
 
@@ -164,6 +169,11 @@ def is_localdir_url(url: str) -> bool:
         and bool(localdir_source_path(url))
         and localdir_direction(url) in LOCAL_UPLOAD_DIRECTIONS
     )
+
+
+def is_localdir_url_format(url: str) -> bool:
+    """Check if URL is a localdir upload (any direction)."""
+    return bool(localdir_task_id(url)) and bool(localdir_source_path(url))
 
 
 def is_localdir_en_to_zh_url(url: str) -> bool:

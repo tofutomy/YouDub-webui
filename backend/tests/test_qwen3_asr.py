@@ -125,3 +125,76 @@ class TestGroupWordsToUtterances:
         assert result[0]["start_time"] == 28480
         assert result[0]["end_time"] == 30960
         assert len(result[0]["words"]) == 13
+
+    def test_tokenization_mismatch_english(self) -> None:
+        """ForcedAligner token 与模型 full_text tokenization 不一致时仍能正确断句。
+
+        模拟场景：ForcedAligner 将 "andTraining" 作为一个 token 返回，
+        而模型 full_text 中为 "and Training"（两个 token）。
+        Step 3 匹配失败后所有词落入不可靠路径，但断句应仍由标点驱动。
+        """
+        words = [
+            _w("machine", 0, 400),
+            _w("learning", 400, 700),
+            _w("andTraining", 700, 1200),  # 匹配失败，不可靠
+            _w("is", 1500, 1600),
+            _w("fun", 1600, 1900),
+            _w("indeed", 2200, 2700),
+        ]
+        full_text = "Machine learning and Training is fun. Indeed."
+        result = _group_words_to_utterances(words, full_text)
+
+        # 应产出 2 个句子，不能合并为一个超长 utterance
+        assert len(result) == 2, f"expected 2 utterances, got {len(result)}"
+        assert result[0]["text"] == "Machine learning and Training is fun."
+        assert result[0]["start_time"] == 0
+        assert result[1]["text"] == "Indeed."
+        assert result[1]["start_time"] == 2200
+
+    def test_tokenization_mismatch_cjk(self) -> None:
+        """CJK 语言的 tokenization 不一致场景——按比例分配词。"""
+        words = [
+            _w("私", 0, 200),
+            _w("は", 200, 300),
+            _w("学生", 300, 600),
+            _w("です今日", 600, 1000),  # 匹配失败，不可靠
+            _w("は", 1200, 1300),
+            _w("いい", 1300, 1500),
+            _w("天気", 1500, 1700),
+        ]
+        full_text = "私は学生です。今日はいい天気。"
+        result = _group_words_to_utterances(words, full_text)
+
+        # 应产出 2 个句子，按字符比例自动分配
+        assert len(result) == 2, f"expected 2 utterances, got {len(result)}"
+        assert result[0]["words"][0]["text"] == "私"  # 第一个词在句1
+        assert result[1]["words"][-1]["text"] == "天気"  # 最后一个词在句2
+        # 验证时间戳跨句不重叠
+        assert result[0]["end_time"] <= result[1]["start_time"]
+
+    def test_fallback_positions_still_split(self) -> None:
+        """所有词的 orig_pos 都相同时（极端 fallback），比例分配仍能切句。
+
+        当 ForcedAligner 返回的 token 与 full_text 完全无法匹配时，
+        Step 3 的所有词都使用 last_pos fallback，orig_pos 全部相同。
+        此时走比例路径，按各句字符数分配词。
+        """
+        words = [
+            _w("tokenA", 0, 500),
+            _w("tokenB", 500, 1000),
+            _w("tokenC", 1000, 1500),
+            _w("tokenD", 1500, 2000),
+            _w("tokenE", 2000, 2500),
+            _w("tokenF", 2500, 3000),
+        ]
+        full_text = "Short sentence. Another longer sentence here. Final one."
+        result = _group_words_to_utterances(words, full_text)
+
+        # 应产出 3 个句子，不能只有 1 个超长 utterance
+        assert len(result) == 3, f"expected 3 utterances, got {len(result)}"
+        assert result[0]["text"] == "Short sentence."
+        assert result[1]["text"] == "Another longer sentence here."
+        assert result[2]["text"] == "Final one."
+        # 验证所有词都已分配
+        total_words = sum(len(u["words"]) for u in result)
+        assert total_words == 6, f"expected 6 words across utterances, got {total_words}"

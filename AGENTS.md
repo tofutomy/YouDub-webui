@@ -31,6 +31,9 @@ yt-dlp / demucs / whisper / funasr / funasr-vllm / openai / voxcpm / ffmpeg
 - **数据库**：SQLite（`data/youdub.sqlite`），4 张表：`tasks`、`task_stages`、`settings`、`translate_providers`。数据库 schema 会自动迁移新增的列。
 - **上传**：支持本地视频上传（`.mp4/.mov/.m4v/.mkv/.webm/.avi/.flv/.wmv`），默认最大 4GB，上传到 `WORKFOLDER/_uploads/`，自动转码为 h.264+aac MP4。
 
+## 代码书写原则
+    编写代码要添加合理的注释,且注释必须用中文编写
+    
 ## 处理 Pipeline（9 阶段）
 
 ```text

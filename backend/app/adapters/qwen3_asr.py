@@ -113,6 +113,36 @@ def release_model() -> None:
     logger.info("Qwen3-ASR models released from GPU memory")
 
 
+def _split_full_text_to_sentence_ranges(full_text: str) -> list[tuple[int, int]]:
+    """按标点将 *full_text* 拆分为句子字符范围。
+
+    返回 ``(start_char, end_char)`` 元组列表，每个元组表示一个句子在
+    *full_text* 中的闭区间字符范围。句子边界由句末标点决定，带小数点保护
+    （``digit.digit`` 不视为句子边界）。
+
+    末尾无句末标点的剩余文本作为最后一个范围返回。
+    """
+    _SENTENCE_PUNCT = set(".!?\u3002\uff01\uff1f\uff1b\uff1a")
+
+    ranges: list[tuple[int, int]] = []
+    sentence_start = 0
+
+    for i, ch in enumerate(full_text):
+        if ch in _SENTENCE_PUNCT:
+            # 小数点保护：digit.digit 不视为句子边界
+            if ch == "." and i > 0 and i + 1 < len(full_text):
+                if full_text[i - 1].isdigit() and full_text[i + 1].isdigit():
+                    continue
+            ranges.append((sentence_start, i))
+            sentence_start = i + 1
+
+    # 结尾无句末标点的剩余文本
+    if sentence_start < len(full_text):
+        ranges.append((sentence_start, len(full_text) - 1))
+
+    return ranges
+
+
 def _group_words_to_utterances(
     words: list[dict[str, Any]],
     full_text: str,
@@ -149,16 +179,11 @@ def _group_words_to_utterances(
     cleaned = "".join(cleaned_chars)
 
     # ------------------------------------------------------------------
-    # Step 2: Collect sentence-ending punctuation positions in the
-    #         original text (skip decimal dots: digit.digit).
+    # Step 2: Split full_text into sentence character ranges by
+    #         sentence-ending punctuation (pure text-driven, independent
+    #          of word matching).
     # ------------------------------------------------------------------
-    sentence_punct_positions: list[int] = []
-    for oi, ch in enumerate(full_text):
-        if ch in _SENTENCE_PUNCT:
-            if ch == "." and oi > 0 and oi + 1 < len(full_text):
-                if full_text[oi - 1].isdigit() and full_text[oi + 1].isdigit():
-                    continue
-            sentence_punct_positions.append(oi)
+    sentence_ranges = _split_full_text_to_sentence_ranges(full_text)
 
     # ------------------------------------------------------------------
     # Step 3: Match each word against the cleaned text sequentially,
@@ -196,59 +221,56 @@ def _group_words_to_utterances(
         return []
 
     # ------------------------------------------------------------------
-    # Step 4: Assign each word to a sentence using the punctuation
-    #         positions as sentence boundaries.
+    # Step 4: 按句子范围分配词（断句由 full_text 标点驱动，不依赖词匹配）。
+    #
+    # 核心设计：断句逻辑与 Step 3 的逐词匹配解耦。即使 Step 3 因
+    # ForcedAligner tokenization 与模型 full_text 不一致而导致 ci 漂移、
+    # orig_pos 错位，句子边界仍由 full_text 中的标点准确决定。
+    #
+    # 策略：当所有词的 orig_pos 都唯一（Step 3 完全成功）时，
+    # 用精确的 orig_pos → 句子映射分配词；否则按各句非标点字符数
+    # 比例分配词。两种路径都保证句子不丢失、不合并。
     # ------------------------------------------------------------------
     utterances: list[dict[str, Any]] = []
-    current_words: list[dict[str, Any]] = []
-    current_first_orig: int = 0  # original-text position of first word in sentence
-    sentence_start_ci = 0  # cleaned-text offset of current sentence start
-    punct_idx = 0  # index into sentence_punct_positions
 
-    for word, orig_pos in word_positions:
-        if not current_words:
-            current_first_orig = orig_pos
-        current_words.append(word)
+    # 检测 Step 3 匹配是否完全可靠（每个词有唯一的 orig_pos）
+    orig_positions = [op for _, op in word_positions]
+    all_reliable = len(set(orig_positions)) == len(orig_positions)
 
-        # Determine the cleaned-text position of this word to check if a
-        # sentence boundary falls between this word and the next.
-        # Find the cleaned-text offset that corresponds to orig_pos.
-        # We search forward in clean_to_orig from sentence_start_ci.
-        word_clean_end = 0
-        for c in range(sentence_start_ci, len(clean_to_orig)):
-            if clean_to_orig[c] >= orig_pos:
-                # This cleaned position is at or past the word's original
-                # position.  The word occupies [orig_pos, orig_pos+len(token)).
-                word_clean_end = c + len(word["text"])
-                break
+    if all_reliable:
+        # ---- 精确路径：按 orig_pos 落入的句子范围分配词 ----
+        current_words: list[dict[str, Any]] = []
+        current_si = 0  # 当前句子在 sentence_ranges 中的索引
 
-        # Check if there's a sentence-ending punctuation in the original
-        # text between the end of this word and the start of the next word.
-        # The "next word start" in original text is the next clean_to_orig
-        # entry after word_clean_end.
-        next_orig_start = len(full_text)  # default: end of text
-        if word_clean_end < len(clean_to_orig):
-            next_orig_start = clean_to_orig[word_clean_end]
+        for word, orig_pos in word_positions:
+            # 找到该词 orig_pos 所属的句子范围
+            word_si = current_si
+            for si in range(current_si, len(sentence_ranges)):
+                s_start, s_end = sentence_ranges[si]
+                if s_start <= orig_pos <= s_end:
+                    word_si = si
+                    break
 
-        # Any sentence-ending punctuation between orig_pos and
-        # next_orig_start marks a sentence boundary.
-        has_boundary = False
-        boundary_orig = -1
-        while punct_idx < len(sentence_punct_positions):
-            pp = sentence_punct_positions[punct_idx]
-            if pp >= next_orig_start:
-                break  # punctuation is after the next word — not yet
-            if pp >= orig_pos:
-                has_boundary = True
-                boundary_orig = pp
-                punct_idx += 1
-                break
-            punct_idx += 1  # skip punctuation before this word
+            if word_si != current_si and current_words:
+                # 句子切换：输出当前句子
+                s_start, s_end = sentence_ranges[current_si]
+                sentence_text = full_text[s_start:s_end + 1].strip()
+                if sentence_text:
+                    utterances.append({
+                        "text": sentence_text,
+                        "start_time": current_words[0]["start_time"],
+                        "end_time": current_words[-1]["end_time"],
+                        "words": list(current_words),
+                    })
+                current_words = []
+                current_si = word_si
 
-        if has_boundary:
-            # Flush: sentence text spans from first word's original
-            # position to the punctuation character (inclusive).
-            sentence_text = full_text[current_first_orig:boundary_orig + 1].strip()
+            current_words.append(word)
+
+        # 输出最后一个句子
+        if current_words:
+            s_start, s_end = sentence_ranges[current_si]
+            sentence_text = full_text[s_start:s_end + 1].strip()
             if sentence_text:
                 utterances.append({
                     "text": sentence_text,
@@ -256,19 +278,58 @@ def _group_words_to_utterances(
                     "end_time": current_words[-1]["end_time"],
                     "words": list(current_words),
                 })
-            current_words = []
-            sentence_start_ci = word_clean_end
+    else:
+        # ---- 比例路径：部分词的 orig_pos 不可靠，按字符比例分配 ----
+        # 计算每个句子的非标点字符数
+        sentence_chars: list[int] = []
+        for s_start, s_end in sentence_ranges:
+            chars = sum(
+                1 for i in range(s_start, s_end + 1)
+                if full_text[i] not in _ALL_PUNCT
+            )
+            sentence_chars.append(chars)
+        total_chars = sum(sentence_chars)
 
-    # Trailing words without sentence-ending punctuation.
-    if current_words:
-        sentence_text = full_text[current_first_orig:].strip()
-        if sentence_text:
-            utterances.append({
-                "text": sentence_text,
-                "start_time": current_words[0]["start_time"],
-                "end_time": current_words[-1]["end_time"],
-                "words": list(current_words),
-            })
+        # 按字符比例计算每个句子的词配额（每句至少 1 个词）
+        total_words = len(word_positions)
+        quotas: list[int] = []
+        remaining = total_words
+        for i in range(len(sentence_ranges)):
+            if i == len(sentence_ranges) - 1:
+                quotas.append(remaining)
+            else:
+                if total_chars > 0:
+                    prop = sentence_chars[i] / total_chars
+                else:
+                    prop = 1.0 / len(sentence_ranges)
+                q = max(1, round(prop * total_words))
+                # 不能超过剩余词数（为后续句子至少各留 1 个）
+                q = min(q, remaining - (len(sentence_ranges) - i - 1))
+                quotas.append(q)
+                remaining -= q
+
+        # 按配额分配词到各句子
+        wi = 0
+        for si, (s_start, s_end) in enumerate(sentence_ranges):
+            bucket: list[dict[str, Any]] = []
+            while wi < total_words and len(bucket) < quotas[si]:
+                bucket.append(word_positions[wi][0])
+                wi += 1
+
+            if bucket:
+                sentence_text = full_text[s_start:s_end + 1].strip()
+                utterances.append({
+                    "text": sentence_text,
+                    "start_time": bucket[0]["start_time"],
+                    "end_time": bucket[-1]["end_time"],
+                    "words": bucket,
+                })
+
+        # 剩余未分配词追加到最后一个句子
+        if wi < total_words:
+            extra = [word_positions[i][0] for i in range(wi, total_words)]
+            utterances[-1]["words"].extend(extra)
+            utterances[-1]["end_time"] = extra[-1]["end_time"]
 
     return utterances
 

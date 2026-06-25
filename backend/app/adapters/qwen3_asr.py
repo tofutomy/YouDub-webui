@@ -113,6 +113,153 @@ def release_model() -> None:
     logger.info("Qwen3-ASR models released from GPU memory")
 
 
+# ---- 断句防御阈值 -----------------------------------------------------------
+# 时间间隔阈值：相邻词 end_time → start_time 间隔超过此值即断句
+_TIME_GAP_THRESHOLD_MS = 1500
+# 一级防御：一个 utterance 超过此词数后在下一个任意标点处断句
+_DEFENSE1_MAX_WORDS = 40
+# 二级防御：一个 utterance 超过此词数后强制每 N 个词断句
+_DEFENSE2_MAX_WORDS = 60
+
+# 所有标点（含句末标点和逗号等软标点），用于防御规则检测
+_PROTECTION_PUNCT = set(".!?,;:\u3002\uff0c\u3001\uff01\uff1f\uff1b\uff1a")
+
+
+def _is_cjk_first(text: str) -> bool:
+    """Return True if the first character of *text* is CJK."""
+    if not text:
+        return False
+    code = ord(text[0])
+    return (
+        0x3400 <= code <= 0x9FFF
+        or 0xF900 <= code <= 0xFAFF
+        or 0x3040 <= code <= 0x30FF
+        or 0xAC00 <= code <= 0xD7AF
+    )
+
+
+def _words_chunk_to_utterance(words: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """从词列表构建一个 utterance。
+
+    ``text`` 由词文本拼接：CJK 直接拼接，非 CJK 用空格分隔。
+    ``start_time`` / ``end_time`` 取自首尾词。
+    """
+    if not words:
+        return None
+    use_space = not _is_cjk_first(words[0].get("text", ""))
+    text = " ".join(w["text"] for w in words) if use_space else "".join(w["text"] for w in words)
+    return {
+        "text": text,
+        "start_time": words[0]["start_time"],
+        "end_time": words[-1]["end_time"],
+        "words": words,
+    }
+
+
+def _split_words_by_time_gap(
+    words: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """按词间时间间隔切分。相邻词间隔 > ``_TIME_GAP_THRESHOLD_MS`` 时断句。"""
+    if len(words) <= 1:
+        return [words] if words else []
+
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = [words[0]]
+    for prev, cur in zip(words, words[1:]):
+        gap = cur["start_time"] - prev["end_time"]
+        if gap > _TIME_GAP_THRESHOLD_MS:
+            chunks.append(current)
+            current = [cur]
+        else:
+            current.append(cur)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _split_words_at_punctuation(
+    words: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """一级防御：超过 ``_DEFENSE1_MAX_WORDS`` 词时在下一个含任意标点的词处断句。
+
+    从第 ``_DEFENSE1_MAX_WORDS`` 个词开始向后扫描，找到第一个词文本中含
+    任意标点（``_PROTECTION_PUNCT``）的词，在此处切分。递归处理剩余词。
+    """
+    if len(words) <= _DEFENSE1_MAX_WORDS:
+        return [words]
+
+    # 从阈值位置向后扫描，找含标点的词
+    for i in range(_DEFENSE1_MAX_WORDS, len(words)):
+        token = words[i].get("text", "")
+        if any(ch in _PROTECTION_PUNCT for ch in token):
+            # 在此处切分（标点词归入前半段）
+            first = words[:i + 1]
+            rest = words[i + 1:]
+            return [first] + _split_words_at_punctuation(rest)
+
+    # 没找到含标点的词 → 整体返回，留给二级防御
+    return [words]
+
+
+def _force_split_words(
+    words: list[dict[str, Any]],
+) -> list[list[dict[str, Any]]]:
+    """二级防御：超过 ``_DEFENSE2_MAX_WORDS`` 词时强制按步长切分。"""
+    if len(words) <= _DEFENSE2_MAX_WORDS:
+        return [words]
+
+    chunks: list[list[dict[str, Any]]] = []
+    for i in range(0, len(words), _DEFENSE2_MAX_WORDS):
+        chunks.append(words[i:i + _DEFENSE2_MAX_WORDS])
+    return chunks
+
+
+def _apply_protection_rules(
+    utterances: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """对每个 utterance 的 words 串行应用三重防御规则，展平后重建 utterance。
+
+    规则顺序：时间间隔断句 → 一级标点防御 → 二级强制防御。
+    后者兜底前者遗漏的情况。
+
+    当防御规则未触发切分时，保留原始 utterance 不变（包含标点的原始 text）。
+    仅当实际发生切分后，才通过词列表重建 text。
+    """
+    if not utterances:
+        return utterances
+
+    result: list[dict[str, Any]] = []
+    for u in utterances:
+        words: list[dict[str, Any]] = u.get("words", [])
+        if not words:
+            result.append(u)
+            continue
+
+        # 规则 1：时间间隔断句
+        time_chunks = _split_words_by_time_gap(words)
+
+        # 对所有时间块串行应用规则 2 + 3
+        all_chunks: list[list[dict[str, Any]]] = []
+        for chunk in time_chunks:
+            punct_chunks = _split_words_at_punctuation(chunk)
+            for pc in punct_chunks:
+                forced = _force_split_words(pc)
+                all_chunks.extend(forced)
+
+        # 如果最终只有 1 个 chunk（未触发任何切分），保留原始 utterance
+        if len(all_chunks) == 1:
+            result.append(u)
+            continue
+
+        # 发生了切分 → 从词列表重建 utterance
+        for fc in all_chunks:
+            utt = _words_chunk_to_utterance(fc)
+            if utt:
+                result.append(utt)
+
+    return result
+
+
 def _split_full_text_to_sentence_ranges(full_text: str) -> list[tuple[int, int]]:
     """按标点将 *full_text* 拆分为句子字符范围。
 
@@ -330,6 +477,9 @@ def _group_words_to_utterances(
             extra = [word_positions[i][0] for i in range(wi, total_words)]
             utterances[-1]["words"].extend(extra)
             utterances[-1]["end_time"] = extra[-1]["end_time"]
+
+    # ---- 后处理：应用三重防御规则（时间间隔 / 标点 / 强制断句） ----
+    utterances = _apply_protection_rules(utterances)
 
     return utterances
 

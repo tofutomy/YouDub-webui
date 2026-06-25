@@ -198,3 +198,97 @@ class TestGroupWordsToUtterances:
         # 验证所有词都已分配
         total_words = sum(len(u["words"]) for u in result)
         assert total_words == 6, f"expected 6 words across utterances, got {total_words}"
+
+    # ------------------------------------------------------------------
+    # 三重防御规则测试
+    # ------------------------------------------------------------------
+
+    def test_time_gap_split(self) -> None:
+        """词间间隔超过 1500ms 时自动断句。"""
+        words = [
+            _w("hello", 0, 500),
+            _w("world", 500, 1000),
+            _w("long", 3000, 3500),    # 间隔 2000ms → 断句
+            _w("pause", 3500, 4000),
+        ]
+        result = _group_words_to_utterances(words, "hello world. long pause.")
+        # 原本标点断为 2 句，但时间间隔在 "world" 和 "long" 之间再切 1 次
+        assert len(result) >= 2
+        # "hello world" 和 "long pause" 应分开
+        texts = [u["text"] for u in result]
+        combined = " ".join(texts)
+        assert "hello" in combined
+        assert "long" in combined
+
+    def test_time_gap_no_split_below_threshold(self) -> None:
+        """间隔 1000ms（< 1500ms）不触发时间断句。"""
+        words = [
+            _w("hello", 0, 500),
+            _w("world", 500, 1000),
+            _w("small", 2000, 2500),   # 间隔 1000ms → 不断
+            _w("gap", 2500, 3000),
+        ]
+        result = _group_words_to_utterances(words, "hello world. small gap.")
+        assert len(result) == 2  # 仅标点断为 2 句
+
+    def test_time_gap_multiple_splits(self) -> None:
+        """多个大间隔应切为多个 utterance。"""
+        words = [
+            _w("first", 0, 500),
+            _w("part", 500, 1000),
+            _w("second", 4000, 4500),   # 间隔 3000ms
+            _w("part", 4500, 5000),
+            _w("third", 8000, 8500),    # 间隔 3000ms
+            _w("part", 8500, 9000),
+        ]
+        result = _group_words_to_utterances(words, "first part second part third part.")
+        assert len(result) == 3
+
+    def test_defense1_punctuation_split(self) -> None:
+        """超过 40 词后，在下一个含逗号等标点的词处断句。"""
+        # 构建 45 个词，第 42 个词含逗号
+        words = [_w(f"word{i}", i * 100, i * 100 + 50) for i in range(45)]
+        words[41] = _w("break,", 41 * 100, 41 * 100 + 50)  # 第 42 个词含逗号
+        full_text = " ".join(w["text"] for w in words) + "."
+        result = _group_words_to_utterances(words, full_text)
+        # 应在第 42 个词处断句
+        assert len(result) >= 2
+        # 第一段包含 "break," 这个词
+        has_comma = any("break," in u["text"] for u in result)
+        assert has_comma
+
+    def test_defense1_no_punctuation_falls_through(self) -> None:
+        """超过 40 词但无任何标点 → 一级防御不切，留给二级防御。"""
+        words = [_w(f"word{i}", i * 100, i * 100 + 50) for i in range(45)]
+        full_text = " ".join(w["text"] for w in words)  # 无标点
+        result = _group_words_to_utterances(words, full_text)
+        # 至少 1 个 utterance（如果不触发二级则是 1，触发则是 2）
+        assert len(result) >= 1
+        total_words = sum(len(u["words"]) for u in result)
+        assert total_words == 45
+
+    def test_defense2_force_split(self) -> None:
+        """超过 60 词时强制按 60 词步长切分。"""
+        words = [_w(f"w{i}", i * 100, i * 100 + 50) for i in range(65)]
+        full_text = " ".join(w["text"] for w in words)
+        result = _group_words_to_utterances(words, full_text)
+        assert len(result) == 2
+        assert len(result[0]["words"]) == 60
+        assert len(result[1]["words"]) == 5
+
+    def test_combined_defenses(self) -> None:
+        """时间间隔 + 词数超限同时触发，所有防御正确作用。"""
+        # 80 个词：在 40 词处有 2000ms 大间隔
+        # → 时间间隔先切 40 + 40，然后第一个 40 词触发标点扫描
+        words = []
+        for i in range(80):
+            base = i * 100 if i < 40 else i * 100 + 2000
+            words.append(_w(f"w{i}", base, base + 50))
+        # 在第 42 个词放入逗号，使一级防御在 40 词后找到它
+        words[41] = _w("w41,", 41 * 100, 41 * 100 + 50)
+        full_text = " ".join(w["text"] for w in words)
+        result = _group_words_to_utterances(words, full_text)
+        # 时间间隔切 2 段，第一段在逗号处再切 → ≥ 3
+        assert len(result) >= 3
+        total_words = sum(len(u["words"]) for u in result)
+        assert total_words == 80

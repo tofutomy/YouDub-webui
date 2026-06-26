@@ -93,6 +93,10 @@ def release_model() -> None:
     Call this after ``recognize_speech`` completes to free VRAM when the
     model is no longer needed.  Subsequent calls to ``recognize_speech``
     will reload the models automatically.
+
+    同时清理由模型加载期间 HuggingFace accelerate 的 ``device_map`` 机制
+    在 Windows 上 spawn 出的孤儿子进程。这些子进程持有 PyTorch CUDA context，
+    如果不清理会导致后续阶段（如 VoxCPM TTS）因显存不足而 OOM。
     """
     global _MODEL, _ALIGNER
     if _MODEL is None and _ALIGNER is None:
@@ -110,7 +114,47 @@ def release_model() -> None:
             torch.cuda.ipc_collect()
     except Exception:
         pass
+
+    # ---- 清理由 device_map 机制 spawn 出的孤儿子进程 -----------------------
+    # 在 Windows 上，HuggingFace accelerate 的 infer_auto_device_map 通过
+    # multiprocessing.spawn 创建子进程来执行设备映射计算。这些子进程在模型
+    # 加载完成后不会被自动清理，仍持有 CUDA context 和大量显存。
+    #
+    # 特征：命令行包含 "multiprocessing.spawn" 且父进程为当前进程。
+    # 注意：此清理只针对 spawn 方式创建的子进程，不通过 PID 去杀。
+    _cleanup_spawn_children()
     logger.info("Qwen3-ASR models released from GPU memory")
+
+
+def _cleanup_spawn_children() -> None:
+    """终止当前进程的所有 multiprocessing.spawn 子进程。
+
+    仅处理命令行中包含 ``multiprocessing.spawn`` 的孤儿子进程，不会误伤
+    其他正常的 Python 子进程（如 uvicorn 的 reload worker 等）。
+    """
+    try:
+        import psutil
+    except ImportError:
+        return
+
+    try:
+        current = psutil.Process()
+        for child in current.children(recursive=False):
+            try:
+                cmdline = child.cmdline()
+                if any("multiprocessing.spawn" in part for part in cmdline):
+                    child.terminate()
+                    child.wait(timeout=5)
+                    logger.info(
+                        "Terminated orphan spawn child PID=%d", child.pid
+                    )
+            except (psutil.NoSuchProcess, psutil.AccessDenied,
+                    psutil.TimeoutExpired) as exc:
+                logger.warning(
+                    "Failed to clean up spawn child PID=%d: %s", child.pid, exc
+                )
+    except Exception as exc:
+        logger.warning("Orphan spawn child cleanup skipped: %s", exc)
 
 
 # ---- 断句防御阈值 -----------------------------------------------------------

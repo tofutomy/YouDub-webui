@@ -25,8 +25,12 @@ from ..runtime_checks import validate_runtime_device
 from ..sanitize import sanitize_text
 from ..stops import STOPPED_BEFORE_START_MESSAGE, mark_task_as_stopped
 from ..task_config import TaskConfig
+from ..languages import (
+    LanguageConfigError,
+    language_pair_to_direction,
+    normalize_config_fields,
+)
 from ..youtube import (
-    LOCAL_UPLOAD_DIRECTIONS,
     extract_video_id,
     is_local_upload_url,
     is_localdir_url,
@@ -64,6 +68,19 @@ def _require_task(task_id: str) -> dict[str, Any]:
     return task
 
 
+def _config_fields_or_422(
+    config: TaskConfig,
+    *,
+    only_set: bool = False,
+    current_task: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """将任务配置规范化为数据库字段，语言方向错误统一返回 422。"""
+    try:
+        return normalize_config_fields(config, only_set=only_set, current_task=current_task)
+    except LanguageConfigError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.post("", status_code=201)
 def create_task(payload: TaskCreate) -> dict[str, Any]:
     """Create a task from a video URL (YouTube / Bilibili / etc.).
@@ -80,7 +97,8 @@ def create_task(payload: TaskCreate) -> dict[str, Any]:
     # Dedup: reuse the existing task for the same video.
     existing_id = database.find_task_by_video_id(video_id)
     if existing_id:
-        fields = payload.config.to_db_fields(only_set=True)
+        existing_task = _require_task(existing_id)
+        fields = _config_fields_or_422(payload.config, only_set=True, current_task=existing_task)
         if fields:
             database.update_task(existing_id, **fields)
         return _require_task(existing_id)
@@ -89,7 +107,7 @@ def create_task(payload: TaskCreate) -> dict[str, Any]:
     task_id = database.create_task(
         payload.url.strip(),
         task_id=video_id,
-        **payload.config.to_db_fields(),
+        **_config_fields_or_422(payload.config),
     )
     worker.enqueue(task_id)
     return _require_task(task_id)
@@ -137,11 +155,8 @@ def upload_local_video(
     automatically transcoded to h.264+aac MP4 by the pipeline.
     """
     cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
-    asr_language = cfg.asr_language or "en"
-    target_language = cfg.target_language or "zh"
-    direction = f"{asr_language}-{target_language}"
-    if direction not in LOCAL_UPLOAD_DIRECTIONS:
-        raise HTTPException(status_code=422, detail="Unsupported local video direction.")
+    fields = _config_fields_or_422(cfg)
+    direction = language_pair_to_direction(fields["asr_language"], fields["target_language"])
 
     _ensure_runtime_ready()
     original_name = Path(file.filename or "").name.strip()
@@ -158,7 +173,7 @@ def upload_local_video(
     database.create_task(
         url,
         task_id=task_id,
-        **cfg.to_db_fields(),
+        **fields,
     )
     database.update_task(task_id, title=Path(original_name).stem)
     worker.enqueue(task_id)
@@ -181,17 +196,14 @@ def create_localdir_task(payload: LocaldirTaskCreate) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=f"Unsupported video file type: {suffix}")
 
     cfg = payload.config
-    asr_language = cfg.asr_language or "en"
-    target_language = cfg.target_language or "zh"
-    direction = f"{asr_language}-{target_language}"
-    if direction not in LOCAL_UPLOAD_DIRECTIONS:
-        raise HTTPException(status_code=422, detail="Unsupported direction.")
+    fields = _config_fields_or_422(cfg)
+    direction = language_pair_to_direction(fields["asr_language"], fields["target_language"])
 
     _ensure_runtime_ready()
 
     task_id = str(uuid.uuid4())
     url = make_localdir_url(task_id, file_path, direction, filename=source_file.name)
-    database.create_task(url, task_id=task_id, **cfg.to_db_fields())
+    database.create_task(url, task_id=task_id, **fields)
     database.update_task(task_id, title=source_file.stem)
     worker.enqueue(task_id)
     return _require_task(task_id)
@@ -207,7 +219,7 @@ def update_task_config(task_id: str, payload: TaskConfig) -> dict[str, Any]:
     task = _require_task(task_id)
     if task["status"] == "running":
         raise HTTPException(status_code=409, detail="Cannot update config of a running task.")
-    fields = payload.to_db_fields(only_set=True)
+    fields = _config_fields_or_422(payload, only_set=True, current_task=task)
     if fields:
         database.update_task(task_id, **fields)
     return _require_task(task_id)

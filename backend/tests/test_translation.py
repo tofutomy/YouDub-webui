@@ -9,11 +9,15 @@ from backend.app.adapters.openai_translate import (
     HotwordItem,
     PreprocessResponse,
 )
-from backend.app.sources import detect_source
+from backend.app.sources import get_source_for_task
 
 
-YT_SOURCE = detect_source("https://www.youtube.com/watch?v=abcdefghijk")
-BB_SOURCE = detect_source("https://www.bilibili.com/video/BV1xx411c7mD")
+YT_SOURCE = get_source_for_task({"url": "https://www.youtube.com/watch?v=abcdefghijk"})
+BB_SOURCE = get_source_for_task({
+    "url": "https://www.bilibili.com/video/BV1xx411c7mD",
+    "asr_language": "zh",
+    "target_language": "en",
+})
 
 
 def _write_asr(path, n: int, full_text: str | None = None) -> None:

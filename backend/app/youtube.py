@@ -3,13 +3,15 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, quote, unquote, urlparse
 
+from .languages import SUPPORTED_DIRECTION_SET
+
 
 YOUTUBE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 BILIBILI_BV_RE = re.compile(r"BV[A-Za-z0-9]{10}")
 BILIBILI_HOSTS = {"bilibili.com", "www.bilibili.com", "m.bilibili.com"}
 LOCAL_UPLOAD_SCHEME = "local"
 LOCAL_UPLOAD_HOST = "upload"
-LOCAL_UPLOAD_DIRECTIONS = {"en-zh", "zh-en", "ja-zh"}
+LOCAL_UPLOAD_DIRECTIONS = SUPPORTED_DIRECTION_SET
 LOCAL_UPLOAD_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 LOCALDIR_SCHEME = "localdir"
 LOCALDIR_TASK_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")

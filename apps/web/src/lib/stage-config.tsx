@@ -14,14 +14,19 @@ import {
   AddSubtitlesCheckbox,
   FilterFillersCheckbox,
 } from "@/components/stage-config-fields"
-import type { Direction } from "@/components/stage-config-fields"
+import {
+  DEFAULT_ASR_LANGUAGE,
+  DEFAULT_TARGET_LANGUAGE,
+  directionFromConfig,
+  directionToLanguages,
+} from "@/lib/directions"
 
 export type { StageConfig }
 
 export const DEFAULT_STAGE_CONFIG: StageConfig = {
   asr_model: "",
-  asr_language: "en",
-  target_language: "zh",
+  asr_language: DEFAULT_ASR_LANGUAGE,
+  target_language: DEFAULT_TARGET_LANGUAGE,
   add_subtitles: true,
   translate_mode: "sentence",
   validate_translation: false,
@@ -34,8 +39,8 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
 }
 
 export function configFromTask(task: Task): StageConfig {
-  const al = task.asr_language || "en"
-  const tl = task.target_language || "zh"
+  const al = task.asr_language || DEFAULT_ASR_LANGUAGE
+  const tl = task.target_language || DEFAULT_TARGET_LANGUAGE
   return {
     asr_model: task.asr_model || "",
     asr_language: al,
@@ -61,12 +66,6 @@ export function configForStage(stage: string, config: StageConfig): Partial<Stag
     }
   }
   return patch
-}
-
-function directionFromConfig(config: StageConfig): Direction {
-  if (config.asr_language === "zh" && config.target_language === "en") return "zh-en"
-  if (config.asr_language === "ja" && config.target_language === "zh") return "ja-zh"
-  return "en-zh"
 }
 
 export interface FieldRenderProps {
@@ -131,8 +130,8 @@ export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
         <DirectionSelect
           value={directionFromConfig(config)}
           onChange={(d) => {
-            const [al, tl] = d.split("-")
-            onChange({ asr_language: al, target_language: tl })
+            const { asr_language, target_language } = directionToLanguages(d)
+            onChange({ asr_language, target_language })
           }}
         />
       ),

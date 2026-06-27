@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from backend.app.adapters import local_video
-from backend.app.sources import detect_source
+from backend.app.sources import get_source_for_task
 from backend.app.youtube import make_localdir_url
 
 
@@ -29,7 +29,7 @@ def test_import_local_video_transcodes_with_configured_ffmpeg(monkeypatch, tmp_p
     session, info = local_video.import_local_video(
         f"local://upload/{task_id}?direction=zh-en&filename=demo.mov",
         tmp_path,
-        detect_source("local://upload/local-task?direction=zh-en"),
+        get_source_for_task({"url": f"local://upload/{task_id}?direction=zh-en&filename=demo.mov"}),
     )
 
     assert session == tmp_path / "local" / f"demo__{task_id}"
@@ -49,7 +49,7 @@ def test_import_localdir_video_creates_link_to_source(monkeypatch, tmp_path):
     source_file.write_bytes(b"mkv-content")
 
     url = make_localdir_url(task_id, str(source_file), "en-zh", "source_video.mkv")
-    source = detect_source(url)
+    source = get_source_for_task({"url": url})
 
     session, info = local_video.import_localdir_video(url, tmp_path, source)
 
@@ -74,7 +74,7 @@ def test_import_localdir_video_skips_when_link_exists(monkeypatch, tmp_path):
     source_file.write_bytes(b"mp4-content")
 
     url = make_localdir_url(task_id, str(source_file), "zh-en", "existing.mp4")
-    source = detect_source(url)
+    source = get_source_for_task({"url": url})
 
     # First call — creates link
     session, _ = local_video.import_localdir_video(url, tmp_path, source)
@@ -89,7 +89,7 @@ def test_import_localdir_video_skips_when_link_exists(monkeypatch, tmp_path):
 def test_import_localdir_video_rejects_missing_file(monkeypatch, tmp_path):
     """Raises FileNotFoundError when source path does not exist."""
     url = make_localdir_url("missing-task", "/nonexistent/video.mp4", "en-zh")
-    source = detect_source(url)
+    source = get_source_for_task({"url": url})
 
     import pytest
 

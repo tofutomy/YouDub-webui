@@ -85,6 +85,91 @@ def test_create_existing_task_updates_direction(monkeypatch, tmp_path):
     assert enqueued == []
 
 
+
+def test_create_url_task_without_config_persists_default_language_pair(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post("/api/tasks", json={"url": "https://www.youtube.com/watch?v=langdefaul1"})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["asr_language"] == "en"
+    assert body["target_language"] == "zh"
+    task = database.get_task(body["id"])
+    assert task["asr_language"] == "en"
+    assert task["target_language"] == "zh"
+
+
+def test_create_bilibili_task_without_config_uses_default_language_pair(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post("/api/tasks", json={"url": "https://www.bilibili.com/video/BV1UNAbzpEzR"})
+
+    assert response.status_code == 201
+    assert response.json()["asr_language"] == "en"
+    assert response.json()["target_language"] == "zh"
+
+
+def test_create_existing_task_with_one_language_side_writes_complete_pair(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    task_id = database.create_task("https://www.youtube.com/watch?v=deduplang11", task_id="deduplang11")
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "url": "https://www.youtube.com/watch?v=deduplang11",
+            "config": {"target_language": "en"},
+        },
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["id"] == task_id
+    assert body["asr_language"] == "zh"
+    assert body["target_language"] == "en"
+    task = database.get_task(task_id)
+    assert task["asr_language"] == "zh"
+    assert task["target_language"] == "en"
+
+
+def test_update_task_config_with_one_language_side_writes_complete_pair(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    task_id = database.create_task(
+        "https://www.youtube.com/watch?v=patchlang11",
+        task_id="patchlang11",
+        asr_language="zh",
+        target_language="en",
+    )
+    client = TestClient(main.app)
+
+    response = client.patch(f"/api/tasks/{task_id}/config", json={"asr_language": "ja"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["asr_language"] == "ja"
+    assert body["target_language"] == "zh"
+    task = database.get_task(task_id)
+    assert task["asr_language"] == "ja"
+    assert task["target_language"] == "zh"
+
+
+def test_create_task_rejects_unsupported_language_direction(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks",
+        json={
+            "url": "https://www.youtube.com/watch?v=badlangdir1",
+            "config": {"asr_language": "ja", "target_language": "en"},
+        },
+    )
+
+    assert response.status_code == 422
+
 def test_masked_openai_key_is_not_saved_back(monkeypatch, tmp_path):
     configure_tmp_runtime(monkeypatch, tmp_path)
     database.save_openai_settings("https://example.com/v1", "sk-test-secret", "test-model")
@@ -801,3 +886,100 @@ def test_delete_local_video_removes_upload(monkeypatch, tmp_path):
     assert response.status_code == 204
     assert not upload_root.exists()
     assert database.get_task(task_id) is None
+
+
+
+def test_upload_local_video_without_config_defaults_to_en_zh(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks/upload",
+        files={"file": ("clip.mp4", b"mp4data", "video/mp4")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["url"].startswith(f"local://upload/{body['id']}?direction=en-zh")
+    assert body["asr_language"] == "en"
+    assert body["target_language"] == "zh"
+
+
+def test_upload_local_video_supports_ja_zh(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks/upload",
+        data={"config": '{"asr_language":"ja"}'},
+        files={"file": ("clip.mp4", b"mp4data", "video/mp4")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["url"].startswith(f"local://upload/{body['id']}?direction=ja-zh")
+    assert body["asr_language"] == "ja"
+    assert body["target_language"] == "zh"
+
+
+def test_upload_local_video_rejects_unsupported_direction(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks/upload",
+        data={"config": '{"asr_language":"ja","target_language":"en"}'},
+        files={"file": ("clip.mp4", b"mp4data", "video/mp4")},
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_localdir_task_defaults_to_en_zh(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"mp4data")
+    client = TestClient(main.app)
+
+    response = client.post("/api/tasks/localdir", json={"file_path": str(source)})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "direction=en-zh" in body["url"]
+    assert body["asr_language"] == "en"
+    assert body["target_language"] == "zh"
+
+
+def test_create_localdir_task_supports_ja_zh(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"mp4data")
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks/localdir",
+        json={"file_path": str(source), "config": {"asr_language": "ja"}},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert "direction=ja-zh" in body["url"]
+    assert body["asr_language"] == "ja"
+    assert body["target_language"] == "zh"
+
+
+def test_create_localdir_task_rejects_unsupported_direction(monkeypatch, tmp_path):
+    configure_tmp_runtime(monkeypatch, tmp_path)
+    source = tmp_path / "clip.mp4"
+    source.write_bytes(b"mp4data")
+    client = TestClient(main.app)
+
+    response = client.post(
+        "/api/tasks/localdir",
+        json={
+            "file_path": str(source),
+            "config": {"asr_language": "ja", "target_language": "en"},
+        },
+    )
+
+    assert response.status_code == 422

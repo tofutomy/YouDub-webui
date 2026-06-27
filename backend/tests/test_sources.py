@@ -47,3 +47,24 @@ def test_localdir_task_with_explicit_languages() -> None:
     assert source.name == "localdir"
     assert source.asr_language == "zh"
     assert source.target_language == "en"
+
+
+
+def test_legacy_local_upload_url_uses_direction_fallback() -> None:
+    source = get_source_for_task({"url": "local://upload/task-004?direction=ja-zh&filename=clip.mp4"})
+
+    assert source.name == "local"
+    assert source.asr_language == "ja"
+    assert source.target_language == "zh"
+
+
+def test_database_languages_win_over_legacy_local_url_direction() -> None:
+    source = get_source_for_task({
+        "url": "local://upload/task-005?direction=ja-zh&filename=clip.mp4",
+        "asr_language": "zh",
+        "target_language": "en",
+    })
+
+    assert source.name == "local"
+    assert source.asr_language == "zh"
+    assert source.target_language == "en"

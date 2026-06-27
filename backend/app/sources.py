@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from .adapters._lang_map import LANG_NAMES
 from .config import COOKIE_DIR
+from .languages import (
+    DEFAULT_ASR_LANGUAGE,
+    DEFAULT_TARGET_LANGUAGE,
+    normalize_task_language_pair,
+)
 from .youtube import (
     is_bilibili_url,
     is_local_url_format,
@@ -13,29 +19,6 @@ from .youtube import (
     local_upload_direction,
     localdir_direction,
 )
-
-
-from .adapters._lang_map import LANG_NAMES
-
-LOCAL_DIRECTIONS = ["en-zh", "zh-en", "ja-zh"]
-
-
-def make_local_direction_matcher(direction: str) -> Callable[[str], bool]:
-    """Return a matcher that checks if a URL is a local upload with the given direction."""
-    def matcher(url: str) -> bool:
-        return is_local_url_format(url) and local_upload_direction(url) == direction
-    return matcher
-
-
-def make_localdir_direction_matcher(direction: str) -> Callable[[str], bool]:
-    """Return a matcher that checks if a URL is a localdir upload with the given direction."""
-    def matcher(url: str) -> bool:
-        return is_localdir_url_format(url) and localdir_direction(url) == direction
-    return matcher
-
-
-DEFAULT_ASR_LANGUAGE = "en"
-DEFAULT_TARGET_LANGUAGE = "zh"
 
 
 @dataclass(frozen=True)
@@ -68,39 +51,34 @@ SOURCES: list[SourceConfig] = [
         matches=is_youtube_url,
         use_proxy=True,
         cookie_filename="youtube.txt",
-        asr_language="en",
-        target_language="zh",
+        asr_language=DEFAULT_ASR_LANGUAGE,
+        target_language=DEFAULT_TARGET_LANGUAGE,
+    ),
+    SourceConfig(
+        name="local",
+        matches=is_local_url_format,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language=DEFAULT_ASR_LANGUAGE,
+        target_language=DEFAULT_TARGET_LANGUAGE,
+    ),
+    SourceConfig(
+        name="localdir",
+        matches=is_localdir_url_format,
+        use_proxy=False,
+        cookie_filename=None,
+        asr_language=DEFAULT_ASR_LANGUAGE,
+        target_language=DEFAULT_TARGET_LANGUAGE,
+    ),
+    SourceConfig(
+        name="bilibili",
+        matches=is_bilibili_url,
+        use_proxy=False,
+        cookie_filename="bilibili.txt",
+        asr_language=DEFAULT_ASR_LANGUAGE,
+        target_language=DEFAULT_TARGET_LANGUAGE,
     ),
 ]
-
-# Add local and localdir entries for each direction
-for direction in LOCAL_DIRECTIONS:
-    src_lang, tgt_lang = direction.split("-")
-    SOURCES.append(SourceConfig(
-        name="local",
-        matches=make_local_direction_matcher(direction),
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language=src_lang,
-        target_language=tgt_lang,
-    ))
-    SOURCES.append(SourceConfig(
-        name="localdir",
-        matches=make_localdir_direction_matcher(direction),
-        use_proxy=False,
-        cookie_filename=None,
-        asr_language=src_lang,
-        target_language=tgt_lang,
-    ))
-
-SOURCES.append(SourceConfig(
-    name="bilibili",
-    matches=is_bilibili_url,
-    use_proxy=False,
-    cookie_filename="bilibili.txt",
-    asr_language="zh",
-    target_language="en",
-))
 
 
 def detect_source(url: str) -> SourceConfig:
@@ -110,31 +88,22 @@ def detect_source(url: str) -> SourceConfig:
     raise ValueError(f"No source matches URL: {url}")
 
 
-_OPPOSITE_LANG: dict[str, str] = {"en": "zh", "zh": "en", "ja": "zh"}
-
-
-def _opposite_language(language: str) -> str:
-    return _OPPOSITE_LANG.get(language, "zh")
-
-
-def _task_languages(task: dict, source: SourceConfig) -> tuple[str, str]:
-    asr_language = (task.get("asr_language") or "").strip()
-    target_language = (task.get("target_language") or "").strip()
-    if asr_language and target_language:
-        return asr_language, target_language
-    if asr_language:
-        return asr_language, _opposite_language(asr_language)
-    if target_language:
-        return _opposite_language(target_language), target_language
-    if source.name in ("local", "localdir"):
-        return source.asr_language, source.target_language
-    return DEFAULT_ASR_LANGUAGE, DEFAULT_TARGET_LANGUAGE
+def _legacy_direction(task: dict, source: SourceConfig) -> str | None:
+    """旧任务缺语言列时，仅本地 URL 允许从 direction 查询串兜底。"""
+    if source.name == "local":
+        return local_upload_direction(task["url"])
+    if source.name == "localdir":
+        return localdir_direction(task["url"])
+    return None
 
 
 def get_source_for_task(task: dict) -> SourceConfig:
     """Get source config for a task, using task-stored translation direction."""
     source = detect_source(task["url"])
-    asr_language, target_language = _task_languages(task, source)
+    asr_language, target_language = normalize_task_language_pair(
+        task,
+        fallback_direction=_legacy_direction(task, source),
+    )
     return SourceConfig(
         name=source.name,
         matches=source.matches,

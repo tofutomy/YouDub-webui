@@ -1,6 +1,7 @@
 "use client"
 
 import { useI18n } from "@/lib/i18n"
+import { SUPPORTED_DIRECTIONS, type Direction } from "@/lib/directions"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -41,8 +42,6 @@ export function AsrModelSelect({ id = "asr-model", value, onChange }: AsrModelSe
 
 /* ── Direction Select ── */
 
-type Direction = "en-zh" | "zh-en" | "ja-zh"
-
 interface DirectionSelectProps {
   id?: string
   value: Direction
@@ -53,6 +52,11 @@ export type { Direction }
 
 export function DirectionSelect({ id = "direction", value, onChange }: DirectionSelectProps) {
   const { t } = useI18n()
+  const directionLabels: Record<Direction, string> = {
+    "en-zh": t.home.localEnZh,
+    "zh-en": t.home.localZhEn,
+    "ja-zh": t.home.localJaZh,
+  }
   return (
     <div className="space-y-2">
       <Label htmlFor={id}>{t.home.localDirectionLabel}</Label>
@@ -61,9 +65,9 @@ export function DirectionSelect({ id = "direction", value, onChange }: Direction
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="en-zh">{t.home.localEnZh}</SelectItem>
-          <SelectItem value="zh-en">{t.home.localZhEn}</SelectItem>
-          <SelectItem value="ja-zh">{t.home.localJaZh}</SelectItem>
+          {SUPPORTED_DIRECTIONS.map((direction) => (
+            <SelectItem key={direction} value={direction}>{directionLabels[direction]}</SelectItem>
+          ))}
         </SelectContent>
       </Select>
     </div>

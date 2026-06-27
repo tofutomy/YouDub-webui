@@ -108,17 +108,6 @@ function getPageNumbers(current: number, totalPages: number): (number | "...")[]
   return pages
 }
 
-function getInitialStageConfig() {
-  if (typeof window === "undefined") return DEFAULT_STAGE_CONFIG
-  try {
-    return defaultConfigFromStorage(
-      window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
-    ) ?? DEFAULT_STAGE_CONFIG
-  } catch {
-    return DEFAULT_STAGE_CONFIG
-  }
-}
-
 export default function Home() {
   const { activeTasksText, stageLabel, statusLabel, t, paginationTotalText, paginationPageInfoText } = useI18n()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -126,8 +115,21 @@ export default function Home() {
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
   const [localPath, setLocalPath] = useState("")
-  const [config, setConfig] = useState<StageConfig>(getInitialStageConfig)
+  // 初始值统一用默认配置，避免 SSR 与客户端不一致导致 hydration 报错
+  const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
+
+  // 客户端挂载后从 localStorage 恢复用户保存的配置
+  useEffect(() => {
+    try {
+      const saved = defaultConfigFromStorage(
+        window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
+      )
+      if (saved) setConfig(saved)
+    } catch {
+      // localStorage 不可用时忽略
+    }
+  }, [])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)

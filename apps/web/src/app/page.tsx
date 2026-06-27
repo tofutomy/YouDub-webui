@@ -2,7 +2,7 @@
 
 import Link from "next/link"
 import { ChangeEvent, FormEvent, useEffect, useRef, useState } from "react"
-import { ChevronRight, Play, Upload } from "lucide-react"
+import { ChevronRight, Play, Save, Upload } from "lucide-react"
 
 import {
   TaskSummary,
@@ -34,6 +34,22 @@ import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 
 const CREATE_SECTION_STAGES = ["separate", "translate", "asr", "asr_fix", "tts", "merge_video"] as const
+const DEFAULT_TASK_CONFIG_STORAGE_KEY = "youdub-default-task-config-v1"
+const STRING_CONFIG_KEYS: (keyof StageConfig)[] = [
+  "asr_model",
+  "asr_language",
+  "target_language",
+  "translate_mode",
+  "tts_mode",
+  "translate_provider_id",
+  "demucs_model",
+]
+const BOOLEAN_CONFIG_KEYS: (keyof StageConfig)[] = [
+  "add_subtitles",
+  "validate_translation",
+  "stop_after_translate",
+  "filter_fillers",
+]
 
 function isActive(status: string) {
   return status === "queued" || status === "running"
@@ -54,6 +70,32 @@ function activeCount(tasks: TaskSummary[]) {
   return tasks.filter((t) => isActive(t.status)).length
 }
 
+function defaultConfigFromStorage(value: string | null): StageConfig | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    const next: StageConfig = { ...DEFAULT_STAGE_CONFIG }
+    const nextRecord = next as unknown as Record<string, unknown>
+    for (const key of STRING_CONFIG_KEYS) {
+      const field = record[key]
+      if (typeof field === "string") nextRecord[key] = field
+    }
+    for (const key of BOOLEAN_CONFIG_KEYS) {
+      const field = record[key]
+      if (typeof field === "boolean") nextRecord[key] = field
+    }
+    const demucsShifts = record.demucs_shifts
+    next.demucs_shifts = typeof demucsShifts === "number" && Number.isFinite(demucsShifts)
+      ? demucsShifts
+      : 1
+    return next
+  } catch {
+    return null
+  }
+}
+
 function getPageNumbers(current: number, totalPages: number): (number | "...")[] {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i + 1)
   const pages: (number | "...")[] = [1]
@@ -66,6 +108,17 @@ function getPageNumbers(current: number, totalPages: number): (number | "...")[]
   return pages
 }
 
+function getInitialStageConfig() {
+  if (typeof window === "undefined") return DEFAULT_STAGE_CONFIG
+  try {
+    return defaultConfigFromStorage(
+      window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
+    ) ?? DEFAULT_STAGE_CONFIG
+  } catch {
+    return DEFAULT_STAGE_CONFIG
+  }
+}
+
 export default function Home() {
   const { activeTasksText, stageLabel, statusLabel, t, paginationTotalText, paginationPageInfoText } = useI18n()
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -73,16 +126,18 @@ export default function Home() {
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
   const [localPath, setLocalPath] = useState("")
-  const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
+  const [config, setConfig] = useState<StageConfig>(getInitialStageConfig)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
+  const [defaultConfigSaved, setDefaultConfigSaved] = useState(false)
   const pageSize = 10
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
 
   function updateConfig(patch: Partial<StageConfig>) {
+    setDefaultConfigSaved(false)
     setConfig((prev) => ({ ...prev, ...patch }))
   }
 
@@ -117,9 +172,21 @@ export default function Home() {
     setLocalFile(event.target.files?.[0] || null)
   }
 
+  function saveDefaultConfig() {
+    setError("")
+    try {
+      window.localStorage.setItem(DEFAULT_TASK_CONFIG_STORAGE_KEY, JSON.stringify(config))
+      setDefaultConfigSaved(true)
+    } catch (err) {
+      setDefaultConfigSaved(false)
+      setError(err instanceof Error ? err.message : t.home.defaultConfigSaveError)
+    }
+  }
+
   async function submitTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError("")
+    setDefaultConfigSaved(false)
     const submittedUrl = youtubeUrl.trim() || bilibiliUrl.trim()
     const submittedPath = localPath.trim().replace(/^["']|["']$/g, "")
     if (!submittedUrl && !localFile && !submittedPath) return
@@ -238,17 +305,23 @@ export default function Home() {
               })}
 
               <div className="flex items-center justify-between gap-3">
-                {queued > 0 ? (
-                  <p className="text-xs text-muted-foreground">
-                    {activeTasksText(queued)}
-                  </p>
-                ) : (
-                  <span />
-                )}
-                <Button type="submit" disabled={!canSubmit}>
-                  {(hasLocalFile || hasLocalPath) ? <Upload className="size-4" /> : <Play className="size-4" />}
-                  {submitting ? t.home.submitting : t.home.createTask}
-                </Button>
+                <div className="min-h-5 text-xs text-muted-foreground">
+                  {defaultConfigSaved ? (
+                    <span className="text-emerald-700">{t.home.defaultConfigSaved}</span>
+                  ) : queued > 0 ? (
+                    <span>{activeTasksText(queued)}</span>
+                  ) : null}
+                </div>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <Button type="button" variant="outline" onClick={saveDefaultConfig}>
+                    <Save className="size-4" />
+                    {t.home.saveDefaultConfig}
+                  </Button>
+                  <Button type="submit" disabled={!canSubmit}>
+                    {(hasLocalFile || hasLocalPath) ? <Upload className="size-4" /> : <Play className="size-4" />}
+                    {submitting ? t.home.submitting : t.home.createTask}
+                  </Button>
+                </div>
               </div>
             </form>
 

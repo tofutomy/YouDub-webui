@@ -131,6 +131,8 @@ def _cleanup_spawn_children() -> None:
 
     仅处理命令行中包含 ``multiprocessing.spawn`` 的孤儿子进程，不会误伤
     其他正常的 Python 子进程（如 uvicorn 的 reload worker 等）。
+
+    使用 ``recursive=True`` 以处理孙进程等更深层级的子进程。
     """
     try:
         import psutil
@@ -139,20 +141,20 @@ def _cleanup_spawn_children() -> None:
 
     try:
         current = psutil.Process()
-        for child in current.children(recursive=False):
+        for child in current.children(recursive=True):
             try:
                 cmdline = child.cmdline()
                 if any("multiprocessing.spawn" in part for part in cmdline):
                     child.terminate()
-                    child.wait(timeout=5)
+                    try:
+                        child.wait(timeout=5)
+                    except psutil.TimeoutExpired:
+                        child.kill()
                     logger.info(
                         "Terminated orphan spawn child PID=%d", child.pid
                     )
-            except (psutil.NoSuchProcess, psutil.AccessDenied,
-                    psutil.TimeoutExpired) as exc:
-                logger.warning(
-                    "Failed to clean up spawn child PID=%d: %s", child.pid, exc
-                )
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
     except Exception as exc:
         logger.warning("Orphan spawn child cleanup skipped: %s", exc)
 

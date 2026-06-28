@@ -18,6 +18,7 @@ installed.
 
 from __future__ import annotations
 
+import gc
 import importlib.util
 import json
 import logging
@@ -677,6 +678,32 @@ def _recognize_speech_vllm(
         dynamic_silence=dynamic_silence,
     )
     return _finalize_asr_json(vocals_file, session, result, _convert_vllm_result)
+
+
+def release_model() -> None:
+    """Release FunASR models (standard and vLLM) from GPU memory.
+
+    Call this after ``recognize_speech`` completes to free VRAM when the
+    model is no longer needed.  Subsequent calls to ``recognize_speech``
+    will reload the model automatically.
+    """
+    global _STANDARD_MODEL, _STANDARD_MODEL_NAME, _VLLM_MODEL, _VLLM_MODEL_NAME
+    if _STANDARD_MODEL is None and _VLLM_MODEL is None:
+        return
+    _STANDARD_MODEL = None
+    _STANDARD_MODEL_NAME = None
+    _VLLM_MODEL = None
+    _VLLM_MODEL_NAME = None
+    for _ in range(3):
+        gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
+    logger.info("FunASR models released from GPU memory")
 
 
 def recognize_speech(

@@ -362,11 +362,14 @@ class PipelineRunner:
                     vocals_file, session, language=source.asr_language, model_id=model_id
                 )
             else:
-                from .adapters.funasr_asr import recognize_speech
+                from .adapters.funasr_asr import recognize_speech, release_model
 
-                self.artifacts.asr_file = recognize_speech(
-                    vocals_file, session, language=source.asr_language, model_id=model_id
-                )
+                try:
+                    self.artifacts.asr_file = recognize_speech(
+                        vocals_file, session, language=source.asr_language, model_id=model_id
+                    )
+                finally:
+                    release_model()
         else:
             from .adapters.whisper_asr import recognize_speech, release_model
             try:

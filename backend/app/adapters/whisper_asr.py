@@ -70,11 +70,15 @@ def release_model() -> None:
     if _MODEL is None:
         return
     _MODEL = None
-    gc.collect()
+    # PyTorch 模型内部存在模块、张量和 autograd 图之间的引用循环，
+    # 需要多轮 GC 才能完全释放。
+    for _ in range(3):
+        gc.collect()
     try:
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
     except Exception:
         pass
 

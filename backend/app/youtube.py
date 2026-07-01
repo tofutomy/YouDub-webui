@@ -95,16 +95,9 @@ def is_local_url_format(url: str) -> bool:
     return bool(local_upload_task_id(url))
 
 
-def is_local_en_to_zh_url(url: str) -> bool:
-    return is_local_upload_url(url) and local_upload_direction(url) == "en-zh"
-
-
-def is_local_zh_to_en_url(url: str) -> bool:
-    return is_local_upload_url(url) and local_upload_direction(url) == "zh-en"
-
-
-def is_local_ja_to_zh_url(url: str) -> bool:
-    return is_local_upload_url(url) and local_upload_direction(url) == "ja-zh"
+def is_local_direction(url: str, direction: str) -> bool:
+    """检查 local:// URL 是否匹配指定翻译方向。"""
+    return is_local_upload_url(url) and local_upload_direction(url) == direction
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +171,6 @@ def is_localdir_url_format(url: str) -> bool:
     return bool(localdir_task_id(url)) and bool(localdir_source_path(url))
 
 
-def is_localdir_en_to_zh_url(url: str) -> bool:
-    return is_localdir_url(url) and localdir_direction(url) == "en-zh"
-
-
-def is_localdir_zh_to_en_url(url: str) -> bool:
-    return is_localdir_url(url) and localdir_direction(url) == "zh-en"
-
-
-def is_localdir_ja_to_zh_url(url: str) -> bool:
-    return is_localdir_url(url) and localdir_direction(url) == "ja-zh"
+def is_localdir_direction(url: str, direction: str) -> bool:
+    """检查 localdir:// URL 是否匹配指定翻译方向。"""
+    return is_localdir_url(url) and localdir_direction(url) == direction

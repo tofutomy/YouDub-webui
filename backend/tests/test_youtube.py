@@ -3,12 +3,10 @@ import pytest
 from backend.app.youtube import (
     extract_video_id,
     is_bilibili_url,
-    is_local_en_to_zh_url,
+    is_local_direction,
     is_local_upload_url,
-    is_local_zh_to_en_url,
-    is_localdir_en_to_zh_url,
+    is_localdir_direction,
     is_localdir_url,
-    is_localdir_zh_to_en_url,
     is_youtube_url,
     local_upload_direction,
     local_upload_task_id,
@@ -51,8 +49,8 @@ def test_local_upload_helpers_parse_direction_and_task_id():
     assert local_upload_task_id(url) == "abc123"
     assert local_upload_direction(url) == "zh-en"
     assert is_local_upload_url(url)
-    assert is_local_zh_to_en_url(url)
-    assert not is_local_en_to_zh_url(url)
+    assert is_local_direction(url, "zh-en")
+    assert not is_local_direction(url, "en-zh")
 
 
 def test_local_upload_helpers_reject_missing_or_unknown_direction():
@@ -73,16 +71,16 @@ def test_make_localdir_url_roundtrip():
     assert localdir_direction(url) == "en-zh"
     assert localdir_filename(url) == "test video.mp4"
     assert is_localdir_url(url)
-    assert is_localdir_en_to_zh_url(url)
-    assert not is_localdir_zh_to_en_url(url)
+    assert is_localdir_direction(url, "en-zh")
+    assert not is_localdir_direction(url, "zh-en")
 
 
 def test_localdir_zh_to_en():
     url = make_localdir_url("abc", "/home/user/视频.mp4", "zh-en", "视频.mp4")
 
     assert is_localdir_url(url)
-    assert is_localdir_zh_to_en_url(url)
-    assert not is_localdir_en_to_zh_url(url)
+    assert is_localdir_direction(url, "zh-en")
+    assert not is_localdir_direction(url, "en-zh")
     assert localdir_source_path(url) == "/home/user/视频.mp4"
 
 

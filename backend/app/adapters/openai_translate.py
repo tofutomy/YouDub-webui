@@ -763,30 +763,17 @@ def _format_ts(ms: float) -> str:
 
 
 def _full_text(data: dict[str, Any], texts: list[str]) -> str:
-    """构建预处理用的全文，优先使用带时间戳的 utterances。"""
+    """构建预处理用的全文，每行带 [HH:MM:SS] 时间戳。"""
     utterances = (data.get("result") or {}).get("utterances") or []
     if utterances:
-        # 根据总量决定分段间隔，生成 4-8 个锚点
         n = len(utterances)
-        if n <= 50:
-            interval = n  # 短内容不插入标记
-        elif n <= 200:
-            interval = 25
-        elif n <= 500:
-            interval = 50
-        else:
-            interval = 100
-
-        lines = []
-        for i, utt in enumerate(utterances):
-            ts = _format_ts(utt.get("start_time", 0))
-            # 在间隔处插入分段标记，模型可直接引用这些时间戳
-            if interval < n and i > 0 and i % interval == 0:
-                lines.append(f"\n=== 分段标记 [{ts}] (第 {i+1} 句) ===")
-            lines.append(f"[{ts}] {utt.get('text', '').strip()}")
+        lines = [
+            f"[{_format_ts(utt.get('start_time', 0))}] {utt.get('text', '').strip()}"
+            for utt in utterances
+        ]
         header = (
             f"以下转录文本共 {n} 句，每行开头带有 [HH:MM:SS] 时间戳。"
-            f"摘要中引用时间戳时，请使用分段标记 === [...] === 中的时间或首句时间戳，不要自行估算。"
+            f"请使用这些行首时间戳作为摘要中时间引用的唯一来源，禁止自行估算时间。"
         )
         return header + "\n" + "\n".join(lines)
     raw = data.get("result", {}).get("text") or ""

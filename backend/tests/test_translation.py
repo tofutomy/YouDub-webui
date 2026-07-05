@@ -105,7 +105,8 @@ def test_translate_asr_passes_meta_and_full_text_to_preprocess(tmp_path, monkeyp
     _stub_translate_batch(monkeypatch, lambda t: t)
 
     openai_translate.translate_asr(asr_file, tmp_path, _settings(), YT_SOURCE)
-    assert seen[0]["full_text"] == "hello world"
+    # _full_text now formats utterances with timestamps for richer preprocess context
+    assert seen[0]["full_text"].endswith("[0:00:00] S0.")
     assert seen[0]["meta"] == {"title": "T", "uploader": "U", "description": "D"}
 
 

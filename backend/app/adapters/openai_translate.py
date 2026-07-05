@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from openai import BadRequestError, OpenAI
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..sources import SourceConfig
 from ._translate_prompts import (
@@ -25,6 +25,8 @@ TRANSLATE_RETRY = 2
 DESCRIPTION_LIMIT = 500
 DEFAULT_CONCURRENCY = 50
 DEFAULT_BATCH_SIZE = 15
+DROP_FRONT = 3  # 批量翻译时每批丢弃前 N 句（仅作上下文参考，不写入结果）
+DROP_BACK = 1   # 批量翻译时每批丢弃后 N 句（仅作上下文参考，不写入结果）
 VALID_MODES = ("sentence", "batch")
 
 
@@ -42,6 +44,21 @@ class PreprocessResponse(BaseModel):
     summary: str = ""
     hotwords: list[HotwordItem] = Field(default_factory=list)
     corrections: list[CorrectionItem] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_corrections(cls, data: Any) -> Any:
+        """模型可能把 corrections 的 'correct' 错写成 'dst'，自动修正。"""
+        if isinstance(data, dict) and isinstance(data.get("corrections"), list):
+            fixed = []
+            for item in data["corrections"]:
+                if isinstance(item, dict) and "wrong" in item:
+                    if "correct" not in item and "dst" in item:
+                        item = {**item, "correct": item["dst"]}
+                    item = {k: v for k, v in item.items() if k in ("wrong", "correct")}
+                fixed.append(item)
+            data["corrections"] = fixed
+        return data
 
 
 class TranslationItem(BaseModel):
@@ -168,7 +185,12 @@ def preprocess(
     for attempt in range(PREPROCESS_RETRY + 1):
         try:
             data = _call_json(client, model, "You output strict JSON only.", user)
-            return PreprocessResponse.model_validate(data)
+            result = PreprocessResponse.model_validate(data)
+            if result.summary.strip():
+                return result
+            # 模型返回了合法 JSON 但 summary 为空，视为失败并重试
+            last_error = ValueError(f"empty summary in response: {str(data)[:200]}")
+            log.warning("preprocess attempt %d returned empty summary, retrying", attempt + 1)
         except (json.JSONDecodeError, ValidationError) as exc:
             last_error = exc
             log.warning("preprocess attempt %d failed: %s", attempt + 1, exc)
@@ -344,16 +366,31 @@ def translate_batch_context(
     )
     client = _client(base_url, api_key)
 
-    half = max(1, batch_size // 2)
+    # 非对称边缘丢弃策略：每批发送 batch_size 句给 LLM，但仅保留中间部分。
+    # 前置上下文比后置更重要 → 前丢 3 句、后丢 1 句。
+    # 首批不丢前置（无上文可参考），尾批不丢后置（无下文可参考）。
+    step = max(1, batch_size - DROP_FRONT - DROP_BACK)
     chunks: list[tuple[int, list[str]]] = []
     skipped = 0
-    for start in range(0, len(texts), half):
+    for start in range(0, len(texts), step):
         end = min(start + batch_size, len(texts))
-        # Skip chunk if ALL sentences in this range are already completed
-        if _completed and all(i in _completed for i in range(start, end)):
+        chunk_texts = texts[start:end]
+        chunk_len = len(chunk_texts)
+
+        # 计算本批实际写入范围（用于判断是否可跳过已完成的批次）
+        df = 0 if start == 0 else DROP_FRONT
+        db = 0 if end >= len(texts) else DROP_BACK
+        if chunk_len <= df + db:  # 句子太少，不丢弃
+            df = 0
+            db = 0
+        write_start = start + df
+        write_end = start + chunk_len - db
+
+        # 若该批次所有可写入句子均已完成，跳过
+        if _completed and all(i in _completed for i in range(write_start, write_end)):
             skipped += 1
             continue
-        chunks.append((start, texts[start:end]))
+        chunks.append((start, chunk_texts))
         if end >= len(texts):
             break
 
@@ -364,8 +401,8 @@ def translate_batch_context(
         merged = [None] * len(texts)
 
     log.info(
-        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, concurrency=%d, resumed=%d, skipped=%d)",
-        len(texts), len(chunks), batch_size, concurrency, len(_completed), skipped,
+        "translate_batch_context: %d sentences -> %d chunks (batch_size=%d, drop_front=%d, drop_back=%d, concurrency=%d, resumed=%d, skipped=%d)",
+        len(texts), len(chunks), batch_size, DROP_FRONT, DROP_BACK, concurrency, len(_completed), skipped,
     )
 
     def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
@@ -399,10 +436,21 @@ def translate_batch_context(
                 continue
             for i, t in enumerate(chunk_translations):
                 pos = offset + i
-                if pos < len(merged) and not merged[pos]:
-                    merged[pos] = t
-                    if on_progress:
-                        on_progress(pos, t)
+                chunk_len = len(chunk_translations)
+                # 确定本批次的丢弃参数
+                is_first = (offset == 0)
+                is_last = (offset + chunk_len >= len(texts))
+                df = 0 if is_first else DROP_FRONT
+                db = 0 if is_last else DROP_BACK
+                if chunk_len <= df + db:
+                    df = 0
+                    db = 0
+                # 仅写入非丢弃区域
+                if df <= i < chunk_len - db:
+                    if pos < len(merged) and not merged[pos]:
+                        merged[pos] = t
+                        if on_progress:
+                            on_progress(pos, t)
             # Real-time incremental checkpoint save after each chunk
             _save_checkpoint()
 
@@ -708,7 +756,39 @@ def _speaker(utt: dict[str, Any]) -> str:
     return "1"
 
 
+def _format_ts(ms: float) -> str:
+    """将毫秒格式化为 HH:MM:SS（统一格式，方便模型理解）。"""
+    s = int(ms / 1000)
+    return f"{s // 3600}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+
 def _full_text(data: dict[str, Any], texts: list[str]) -> str:
+    """构建预处理用的全文，优先使用带时间戳的 utterances。"""
+    utterances = (data.get("result") or {}).get("utterances") or []
+    if utterances:
+        # 根据总量决定分段间隔，生成 4-8 个锚点
+        n = len(utterances)
+        if n <= 50:
+            interval = n  # 短内容不插入标记
+        elif n <= 200:
+            interval = 25
+        elif n <= 500:
+            interval = 50
+        else:
+            interval = 100
+
+        lines = []
+        for i, utt in enumerate(utterances):
+            ts = _format_ts(utt.get("start_time", 0))
+            # 在间隔处插入分段标记，模型可直接引用这些时间戳
+            if interval < n and i > 0 and i % interval == 0:
+                lines.append(f"\n=== 分段标记 [{ts}] (第 {i+1} 句) ===")
+            lines.append(f"[{ts}] {utt.get('text', '').strip()}")
+        header = (
+            f"以下转录文本共 {n} 句，每行开头带有 [HH:MM:SS] 时间戳。"
+            f"摘要中引用时间戳时，请使用分段标记 === [...] === 中的时间或首句时间戳，不要自行估算。"
+        )
+        return header + "\n" + "\n".join(lines)
     raw = data.get("result", {}).get("text") or ""
     if raw.strip():
         return raw

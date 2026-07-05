@@ -322,10 +322,22 @@ def _split_full_text_to_sentence_ranges(full_text: str) -> list[tuple[int, int]]
 
     for i, ch in enumerate(full_text):
         if ch in _SENTENCE_PUNCT:
-            # 小数点保护：digit.digit 不视为句子边界
             if ch == "." and i > 0 and i + 1 < len(full_text):
+                # 小数点保护：digit.digit 不视为句子边界
                 if full_text[i - 1].isdigit() and full_text[i + 1].isdigit():
                     continue
+                # 缩写保护：独立单字母 + "." + 可选空格 + 大写（如 "U. S."、"U.S."）
+                prev_ch = full_text[i - 1]
+                prev_prev = full_text[i - 2] if i >= 2 else ""
+                if (prev_ch.isupper()
+                        and (i < 2 or not prev_prev.isalpha())
+                        and i + 1 < len(full_text)):
+                    # 向后跳过空格，看下一个非空格字符是否为大写字母
+                    j = i + 1
+                    while j < len(full_text) and full_text[j] == " ":
+                        j += 1
+                    if j < len(full_text) and full_text[j].isupper():
+                        continue
             ranges.append((sentence_start, i))
             sentence_start = i + 1
 
@@ -381,34 +393,60 @@ def _group_words_to_utterances(
     # ------------------------------------------------------------------
     # Step 3: Match each word against the cleaned text sequentially,
     #         recording its position in the original text.
+    #
+    # 容错策略（三层恢复）：
+    #   1. 正常：ci 处直接匹配
+    #   2. 局部滑动：ci 向前最多扫描 _MAX_SLIDE 个字符
+    #   3. 全局恢复：局部未找到时，用 cleaned.find(token, last_good_ci)
+    #      从上次成功位置重新搜索。找到 → ci 跳转恢复同步。
+    #   4. 彻底失败：标记 orig_pos=-1，ci 回退到 last_good_ci（不前进）。
     # ------------------------------------------------------------------
+    _MAX_SLIDE = 200  # 局部前向扫描的最大字符数
+
     word_positions: list[tuple[dict[str, Any], int]] = []  # (word, orig_pos)
     ci = 0  # current position in cleaned text
+    last_good_ci = 0  # 上一次成功匹配后 ci 的位置（恢复锚点）
+    n_clean = len(cleaned)
+
     for word in words:
         token = word["text"]
         if token in _ALL_PUNCT:
             continue  # skip punctuation tokens from the aligner
 
-        matched = False
-        while ci < len(cleaned):
-            remaining_clean = cleaned[ci:]
-            if remaining_clean.startswith(token):
-                orig_pos = clean_to_orig[ci]
-                word_positions.append((word, orig_pos))
-                ci += len(token)
-                matched = True
-                break
-            # Fallback: token might be a sub-word fragment that doesn't
-            # match the cleaned text exactly (e.g., Japanese morphemes
-            # split differently by the aligner).  Skip one character
-            # and try again.
-            ci += 1
+        tlen = len(token)
 
-        if not matched:
-            # Exhausted cleaned text — append word at the last known
-            # position so it is not lost.
-            last_pos = word_positions[-1][1] if word_positions else 0
-            word_positions.append((word, last_pos))
+        # ---- 尝试 1：ci 处直接匹配 ----
+        if ci + tlen <= n_clean and cleaned[ci:ci + tlen] == token:
+            word_positions.append((word, clean_to_orig[ci]))
+            ci += tlen
+            last_good_ci = ci
+            continue
+
+        # ---- 尝试 2：局部前向滑动（最多 _MAX_SLIDE 字符）----
+        slide_limit = min(ci + _MAX_SLIDE, n_clean - tlen + 1)
+        found = -1
+        for j in range(ci + 1, slide_limit):
+            if cleaned[j:j + tlen] == token:
+                found = j
+                break
+
+        if found >= 0:
+            word_positions.append((word, clean_to_orig[found]))
+            ci = found + tlen
+            last_good_ci = ci
+            continue
+
+        # ---- 尝试 3：全局恢复搜索 ----
+        found = cleaned.find(token, last_good_ci)
+        if found >= 0:
+            word_positions.append((word, clean_to_orig[found]))
+            ci = found + tlen
+            last_good_ci = ci
+            continue
+
+        # ---- 尝试 4：彻底失败——回退 ci，标记不可用 ----
+        word_positions.append((word, -1))
+        ci = last_good_ci  # 回退到已知安全位置，不前进
 
     if not word_positions:
         return []
@@ -416,52 +454,29 @@ def _group_words_to_utterances(
     # ------------------------------------------------------------------
     # Step 4: 按句子范围分配词（断句由 full_text 标点驱动，不依赖词匹配）。
     #
-    # 核心设计：断句逻辑与 Step 3 的逐词匹配解耦。即使 Step 3 因
-    # ForcedAligner tokenization 与模型 full_text 不一致而导致 ci 漂移、
-    # orig_pos 错位，句子边界仍由 full_text 中的标点准确决定。
-    #
-    # 策略：当所有词的 orig_pos 都唯一（Step 3 完全成功）时，
-    # 用精确的 orig_pos → 句子映射分配词；否则按各句非标点字符数
-    # 比例分配词。两种路径都保证句子不丢失、不合并。
+    # orig_pos >= 0 的词按精确位置分配到句子；orig_pos=-1 的词
+    #（匹配失败）留在当前句子，不触发句子切换。
     # ------------------------------------------------------------------
     utterances: list[dict[str, Any]] = []
+    current_words: list[dict[str, Any]] = []
+    current_si = 0  # 当前句子在 sentence_ranges 中的索引
 
-    # 检测 Step 3 匹配是否完全可靠（每个词有唯一的 orig_pos）
-    orig_positions = [op for _, op in word_positions]
-    all_reliable = len(set(orig_positions)) == len(orig_positions)
-
-    if all_reliable:
-        # ---- 精确路径：按 orig_pos 落入的句子范围分配词 ----
-        current_words: list[dict[str, Any]] = []
-        current_si = 0  # 当前句子在 sentence_ranges 中的索引
-
-        for word, orig_pos in word_positions:
-            # 找到该词 orig_pos 所属的句子范围
-            word_si = current_si
-            for si in range(current_si, len(sentence_ranges)):
-                s_start, s_end = sentence_ranges[si]
-                if s_start <= orig_pos <= s_end:
-                    word_si = si
-                    break
-
-            if word_si != current_si and current_words:
-                # 句子切换：输出当前句子
-                s_start, s_end = sentence_ranges[current_si]
-                sentence_text = full_text[s_start:s_end + 1].strip()
-                if sentence_text:
-                    utterances.append({
-                        "text": sentence_text,
-                        "start_time": current_words[0]["start_time"],
-                        "end_time": current_words[-1]["end_time"],
-                        "words": list(current_words),
-                    })
-                current_words = []
-                current_si = word_si
-
+    for word, orig_pos in word_positions:
+        # 匹配失败的词留在当前句子
+        if orig_pos < 0:
             current_words.append(word)
+            continue
 
-        # 输出最后一个句子
-        if current_words:
+        # 找到该词 orig_pos 所属的句子范围
+        word_si = current_si
+        for si in range(current_si, len(sentence_ranges)):
+            s_start, s_end = sentence_ranges[si]
+            if s_start <= orig_pos <= s_end:
+                word_si = si
+                break
+
+        if word_si != current_si and current_words:
+            # 句子切换：输出当前句子
             s_start, s_end = sentence_ranges[current_si]
             sentence_text = full_text[s_start:s_end + 1].strip()
             if sentence_text:
@@ -471,58 +486,22 @@ def _group_words_to_utterances(
                     "end_time": current_words[-1]["end_time"],
                     "words": list(current_words),
                 })
-    else:
-        # ---- 比例路径：部分词的 orig_pos 不可靠，按字符比例分配 ----
-        # 计算每个句子的非标点字符数
-        sentence_chars: list[int] = []
-        for s_start, s_end in sentence_ranges:
-            chars = sum(
-                1 for i in range(s_start, s_end + 1)
-                if full_text[i] not in _ALL_PUNCT
-            )
-            sentence_chars.append(chars)
-        total_chars = sum(sentence_chars)
+            current_words = []
+            current_si = word_si
 
-        # 按字符比例计算每个句子的词配额（每句至少 1 个词）
-        total_words = len(word_positions)
-        quotas: list[int] = []
-        remaining = total_words
-        for i in range(len(sentence_ranges)):
-            if i == len(sentence_ranges) - 1:
-                quotas.append(remaining)
-            else:
-                if total_chars > 0:
-                    prop = sentence_chars[i] / total_chars
-                else:
-                    prop = 1.0 / len(sentence_ranges)
-                q = max(1, round(prop * total_words))
-                # 不能超过剩余词数（为后续句子至少各留 1 个）
-                q = min(q, remaining - (len(sentence_ranges) - i - 1))
-                quotas.append(q)
-                remaining -= q
+        current_words.append(word)
 
-        # 按配额分配词到各句子
-        wi = 0
-        for si, (s_start, s_end) in enumerate(sentence_ranges):
-            bucket: list[dict[str, Any]] = []
-            while wi < total_words and len(bucket) < quotas[si]:
-                bucket.append(word_positions[wi][0])
-                wi += 1
-
-            if bucket:
-                sentence_text = full_text[s_start:s_end + 1].strip()
-                utterances.append({
-                    "text": sentence_text,
-                    "start_time": bucket[0]["start_time"],
-                    "end_time": bucket[-1]["end_time"],
-                    "words": bucket,
-                })
-
-        # 剩余未分配词追加到最后一个句子
-        if wi < total_words:
-            extra = [word_positions[i][0] for i in range(wi, total_words)]
-            utterances[-1]["words"].extend(extra)
-            utterances[-1]["end_time"] = extra[-1]["end_time"]
+    # 输出最后一个句子
+    if current_words:
+        s_start, s_end = sentence_ranges[current_si]
+        sentence_text = full_text[s_start:s_end + 1].strip()
+        if sentence_text:
+            utterances.append({
+                "text": sentence_text,
+                "start_time": current_words[0]["start_time"],
+                "end_time": current_words[-1]["end_time"],
+                "words": list(current_words),
+            })
 
     # ---- 后处理：应用三重防御规则（时间间隔 / 标点 / 强制断句） ----
     utterances = _apply_protection_rules(utterances)

@@ -70,7 +70,7 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 | `separate` | `media/audio_vocals.wav`，`media/audio_bgm.wav` |
 | `asr` | `metadata/asr.json`、`metadata/asr.raw.funasr.json` 或 `metadata/asr.raw.remote_funasr.json` |
 | `asr_fix` | `metadata/asr_fixed.json` |
-| `translate` | `metadata/translation.{lang}.json`，`metadata/subtitles.{lang}.srt` |
+| `translate` | `metadata/translation.{lang}.json`，`metadata/translation.*.checkpoint.json`，`metadata/subtitles.{lang}.srt`，`metadata/validation.json`，`metadata/validation.*.checkpoint.json`，`metadata/preprocess.json` |
 | `split_audio` | `segments/vocals/*.wav` |
 | `tts` | `segments/tts/*.wav` |
 | `merge_audio` | `tmp/audio_dubbing.wav`，`metadata/timings.json` |

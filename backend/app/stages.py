@@ -46,6 +46,7 @@ STAGES: tuple[StageSpec, ...] = (
             "metadata/subtitles.*.srt",
             "metadata/validation.json",
             "metadata/validation.*.checkpoint.json",
+            "metadata/preprocess.json",
         ),
     ),
     StageSpec(

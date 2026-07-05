@@ -288,6 +288,8 @@ def rerun_task(task_id: str) -> dict[str, Any]:
     preserved_config = TaskConfig.from_task_dict(task)
     _purge_task(task)
     new_id = database.create_task(url, task_id=task_id, **preserved_config.to_db_fields())
+    # 清理残留的 stop event，防止重跑时被旧的 stop 请求立即终止
+    worker.cleanup_stop(new_id)
     worker.enqueue(new_id)
     return _require_task(new_id)
 
@@ -299,6 +301,8 @@ def resume_task(task_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Only failed tasks can be resumed.")
     _ensure_runtime_ready()
     database.reset_failed_for_resume(task_id)
+    # 清理残留的 stop event，防止恢复时被旧的 stop 请求立即终止
+    worker.cleanup_stop(task_id)
     worker.enqueue(task_id)
     return _require_task(task_id)
 
@@ -331,6 +335,8 @@ def rerun_stage(task_id: str, stage_name: str) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=f"Unknown stage: {stage_name}")
     _ensure_runtime_ready()
     database.reset_stage_for_rerun(task_id, stage_name)
+    # 清理残留的 stop event，防止级联重跑时被旧的 stop 请求立即终止
+    worker.cleanup_stop(task_id)
     worker.enqueue(task_id)
     return _require_task(task_id)
 

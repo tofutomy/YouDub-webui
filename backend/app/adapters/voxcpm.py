@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import json
 import os
 from pathlib import Path
@@ -36,6 +37,29 @@ def _load_model():
             load_denoiser=os.getenv("VOXCPM_LOAD_DENOISER", "false").lower() == "true",
         )
     return _MODEL
+
+
+def release_model() -> None:
+    """释放 VoxCPM 模型占用的 GPU 显存。
+
+    在 ``generate_tts`` 完成后调用以释放 VRAM。
+    后续调用 ``generate_tts`` 会自动重新加载模型。
+    """
+    global _MODEL
+    if _MODEL is None:
+        return
+    _MODEL = None
+    # PyTorch 模型内部存在模块、张量和 autograd 图之间的引用循环，
+    # 需要多轮 GC 才能完全释放。
+    for _ in range(3):
+        gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+    except Exception:
+        pass
 
 
 def _fallback_reference(vocals_dir: Path, min_ms: int) -> Path:

@@ -456,18 +456,21 @@ class PipelineRunner:
         self.stage_message("split_audio", "Created vocal reference segments")
 
     def _tts(self, task: dict) -> None:
-        from .adapters.voxcpm import generate_tts
+        from .adapters.voxcpm import generate_tts, release_model
 
         session = _require(self.artifacts.session, "session")
         translation_file = _require(self.artifacts.translation_file, "translation_file")
         vocals_dir = _require(self.artifacts.vocals_dir, "vocals_dir")
-        self.artifacts.tts_dir = generate_tts(
-            translation_file,
-            vocals_dir,
-            session,
-            tts_mode=task.get("tts_mode"),
-            progress_callback=lambda progress, message: self.stage_progress("tts", progress, message),
-        )
+        try:
+            self.artifacts.tts_dir = generate_tts(
+                translation_file,
+                vocals_dir,
+                session,
+                tts_mode=task.get("tts_mode"),
+                progress_callback=lambda progress, message: self.stage_progress("tts", progress, message),
+            )
+        finally:
+            release_model()
         wav_count = len(list(self.artifacts.tts_dir.glob("*.wav")))
         self.stage_message("tts", f"Generated {wav_count} TTS clips -> {self.artifacts.tts_dir}")
 

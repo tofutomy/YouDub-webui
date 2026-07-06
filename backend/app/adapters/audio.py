@@ -57,7 +57,10 @@ def _stretch_segment(audio_file: Path, ratio: float, target_sec: float, cache_di
         y, sr = librosa.load(str(audio_file), sr=None)
         return y, sr
     out_path = cache_dir / audio_file.name
-    stretch_audio(str(audio_file), str(out_path), ratio=ratio)
+    try:
+        stretch_audio(str(audio_file), str(out_path), ratio=ratio)
+    except Exception:
+        raise RuntimeError(f"Failed to stretch audio: {audio_file}") from None
     y, sr = librosa.load(str(out_path), sr=None)
     return y[: int(target_sec * sr)], sr
 

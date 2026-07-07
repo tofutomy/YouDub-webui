@@ -209,14 +209,21 @@ def _load_vad_model():
     return _VAD_MODEL
 
 
-def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
+def _vad_segments(audio_path: str, duration_ms: int = 0) -> list[tuple[int, int]]:
     """Run FSMN-VAD and return ``[(start_ms, end_ms), ...]`` segments.
 
     Each segment is guaranteed ≤ 30 000 ms.  Segments shorter than
-    200 ms are dropped (likely noise).
+    200 ms are dropped (likely noise).  If VAD returns no segments or
+    a single segment covering ≥90% of the audio, falls back to
+    fixed-size 30s slicing so the model never processes >30s at once.
     """
     vad = _load_vad_model()
-    result = vad.generate(input=audio_path, cache={})
+    # max_single_segment_time 强制 VAD 在 30s 处断句，和 SenseVoiceSmall 走
+    # FunASR pipeline 时的配置一致。不传的话 VAD 会把连续语音合并成超长段。
+    result = vad.generate(
+        input=audio_path, cache={},
+        max_single_segment_time=30000,
+    )
 
     raw_segments: list[tuple[int, int]] = []
     for item in result:
@@ -232,6 +239,16 @@ def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
                 continue
             raw_segments.append((start_ms, end_ms))
 
+    # VAD 失败兜底：无段或单段覆盖几乎全部音频 → 固定 30s 切分
+    if duration_ms > 0 and len(raw_segments) <= 1:
+        if not raw_segments or raw_segments[0][1] - raw_segments[0][0] > duration_ms * 0.9:
+            logger.warning(
+                "VAD returned %d segment(s) for %d ms audio, "
+                "falling back to fixed 30s slicing",
+                len(raw_segments), duration_ms,
+            )
+            return _force_split(duration_ms)
+
     MAX_MS = 30_000
     segments: list[tuple[int, int]] = []
     for start_ms, end_ms in raw_segments:
@@ -240,6 +257,18 @@ def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
             start_ms += MAX_MS
         segments.append((start_ms, end_ms))
 
+    return segments
+
+
+def _force_split(duration_ms: int, chunk_ms: int = 30_000) -> list[tuple[int, int]]:
+    """Split audio into fixed-size chunks, ignoring VAD."""
+    segments: list[tuple[int, int]] = []
+    pos = 0
+    while pos < duration_ms:
+        end = min(pos + chunk_ms, duration_ms)
+        if end - pos >= 200:
+            segments.append((pos, end))
+        pos = end
     return segments
 
 
@@ -277,19 +306,22 @@ def _load_audio(audio_path: str, sample_rate: int = 16000) -> np.ndarray:
 
 
 def _extract_segment(
-    audio_path: str, start_ms: int, end_ms: int, sr: int = 16000
+    audio_samples: np.ndarray, audio_sr: int, start_ms: int, end_ms: int, sr: int = 16000
 ) -> np.ndarray:
-    """Extract a time segment from *audio_path* as a float32 numpy array."""
-    audio = AudioSegment.from_file(audio_path)
-    segment = audio[start_ms:end_ms]
-    samples = np.array(segment.get_array_of_samples(), dtype=np.float32)
-    if segment.channels == 2:
-        samples = samples.reshape(-1, 2).mean(axis=1)
-    samples /= 32768.0
-    if segment.frame_rate != sr:
+    """Extract a time segment from cached *audio_samples* (float32, mono).
+
+    *audio_samples* is the full audio as a 1-D float32 numpy array at
+    *audio_sr* Hz.  Returns a 1-D float32 array at *sr* Hz.
+    """
+    start_sample = int(start_ms / 1000.0 * audio_sr)
+    end_sample = int(end_ms / 1000.0 * audio_sr)
+    segment = audio_samples[start_sample:end_sample]
+    if segment.size == 0:
+        return segment
+    if audio_sr != sr:
         import librosa
-        samples = librosa.resample(samples, orig_sr=segment.frame_rate, target_sr=sr)
-    return samples
+        segment = librosa.resample(segment, orig_sr=audio_sr, target_sr=sr)
+    return segment
 
 
 # ---------------------------------------------------------------------------
@@ -480,7 +512,7 @@ def _transcribe_chunk(
     with torch.inference_mode():
         generated_ids = model.generate(
             **inputs,
-            max_new_tokens=1024,
+            max_new_tokens=2048,
             do_sample=False,
             num_beams=1,
             use_cache=True,
@@ -521,12 +553,16 @@ def recognize_speech(
 
     vocals_path = str(vocals_file)
 
+    # 加载音频为 numpy 数组（只加载一次，后续段提取直接切片，零拷贝）
+    audio_samples = _load_audio(vocals_path, sample_rate=16000)
+    audio_sr = 16000
+    duration_ms = int(len(audio_samples) / audio_sr * 1000)
+
     # Step 1: VAD 切段
     logger.info("MOSS-Audio: running FSMN-VAD on %s", vocals_file.name)
-    segments = _vad_segments(vocals_path)
+    segments = _vad_segments(vocals_path, duration_ms=duration_ms)
     if not segments:
-        dur_ms = len(AudioSegment.from_file(vocals_file))
-        segments = [(0, dur_ms)]
+        segments = [(0, duration_ms)]
 
     # Step 2: 加载模型
     model, processor = _load_model()
@@ -538,11 +574,14 @@ def recognize_speech(
     raw_segments: list[dict[str, Any]] = []
 
     for idx, (start_ms, end_ms) in enumerate(segments):
-        audio_array = _extract_segment(vocals_path, start_ms, end_ms)
+        audio_array = _extract_segment(audio_samples, audio_sr, start_ms, end_ms)
         if audio_array.size == 0:
             continue
 
         text = _transcribe_chunk(audio_array, model, processor, device)
+        # 立即释放段音频数据
+        del audio_array
+
         if not text:
             continue
 
@@ -558,6 +597,13 @@ def recognize_speech(
         utterances.extend(chunk_utterances)
         full_text_parts.append(text)
 
+        # 段间强制释放：删除 generate() 内部残留的 KV cache + 中间张量
+        import torch
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.ipc_collect()
+
         if (idx + 1) % 10 == 0:
             logger.info("MOSS-Audio: processed %d/%d segments", idx + 1, len(segments))
 
@@ -565,7 +611,6 @@ def recognize_speech(
         raise RuntimeError("MOSS-Audio did not produce any utterances.")
 
     # Step 4: 保存原始结果
-    duration_ms = len(AudioSegment.from_file(vocals_file))
     raw_output = metadata_dir / "asr.raw.moss_audio.json"
     raw_output.write_text(
         json.dumps(

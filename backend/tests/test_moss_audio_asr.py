@@ -11,6 +11,7 @@ import pytest
 from backend.app.adapters.moss_audio_asr import (
     _distribute_by_punctuation,
     _distribute_with_time_markers,
+    _force_split,
     _parse_timestamped_text,
     _split_text_to_sentences,
     _vad_segments,
@@ -201,6 +202,60 @@ class TestVadSegments:
         assert result[1] == (30000, 60000)
         assert result[2] == (60000, 70000)
 
+    @patch("backend.app.adapters.moss_audio_asr._load_vad_model")
+    def test_vad_fallback_single_segment(self, mock_load: MagicMock) -> None:
+        """When VAD returns one huge segment, fall back to fixed splitting."""
+        mock_vad = MagicMock()
+        mock_vad.generate.return_value = [{"timestamp": [[0, 300000]]}]
+        mock_load.return_value = mock_vad
+        result = _vad_segments("test.wav", duration_ms=300000)
+        # Should be force-split into 30s chunks
+        assert len(result) == 10
+        assert result[0] == (0, 30000)
+        assert result[-1] == (270000, 300000)
+
+    @patch("backend.app.adapters.moss_audio_asr._load_vad_model")
+    def test_vad_fallback_no_segments(self, mock_load: MagicMock) -> None:
+        """When VAD returns nothing, fall back to fixed splitting."""
+        mock_vad = MagicMock()
+        mock_vad.generate.return_value = []
+        mock_load.return_value = mock_vad
+        result = _vad_segments("test.wav", duration_ms=60000)
+        assert len(result) == 2
+        assert result[0] == (0, 30000)
+        assert result[1] == (30000, 60000)
+
+
+# ---------------------------------------------------------------------------
+# _force_split
+# ---------------------------------------------------------------------------
+
+
+class TestForceSplit:
+    """Verify fixed-size chunk splitting."""
+
+    def test_short_audio(self) -> None:
+        result = _force_split(10000)
+        assert result == [(0, 10000)]
+
+    def test_exact_chunk(self) -> None:
+        result = _force_split(30000)
+        assert result == [(0, 30000)]
+
+    def test_two_chunks(self) -> None:
+        result = _force_split(45000)
+        assert result == [(0, 30000), (30000, 45000)]
+
+    def test_many_chunks(self) -> None:
+        result = _force_split(300000)
+        assert len(result) == 10
+        assert result[0] == (0, 30000)
+        assert result[-1] == (270000, 300000)
+
+    def test_custom_chunk_size(self) -> None:
+        result = _force_split(25000, chunk_ms=10000)
+        assert result == [(0, 10000), (10000, 20000), (20000, 25000)]
+
 
 # ---------------------------------------------------------------------------
 # recognize_speech (integration mock)
@@ -214,10 +269,10 @@ class TestRecognizeSpeech:
     @patch("backend.app.adapters.moss_audio_asr._load_model")
     @patch("backend.app.adapters.moss_audio_asr._transcribe_chunk")
     @patch("backend.app.adapters.moss_audio_asr._extract_segment")
-    @patch("backend.app.adapters.moss_audio_asr.AudioSegment")
+    @patch("backend.app.adapters.moss_audio_asr._load_audio")
     def test_basic_pipeline_with_time_markers(
         self,
-        mock_audio_seg: MagicMock,
+        mock_load_audio: MagicMock,
         mock_extract: MagicMock,
         mock_transcribe: MagicMock,
         mock_load: MagicMock,
@@ -228,15 +283,12 @@ class TestRecognizeSpeech:
 
         mock_vad.return_value = [(0, 5000), (6000, 10000)]
         mock_load.return_value = (MagicMock(), MagicMock())
+        mock_load_audio.return_value = np.zeros(160000, dtype=np.float32)  # 10s at 16kHz
         mock_extract.return_value = np.zeros(16000, dtype=np.float32)
         mock_transcribe.side_effect = [
             "[0.06]Hello world.[3.04]Goodbye.",
             "[0.06]How are you?",
         ]
-
-        mock_audio = MagicMock()
-        mock_audio.__len__ = MagicMock(return_value=10000)
-        mock_audio_seg.from_file.return_value = mock_audio
 
         session = tmp_path / "session"
         session.mkdir()
@@ -262,10 +314,10 @@ class TestRecognizeSpeech:
     @patch("backend.app.adapters.moss_audio_asr._load_model")
     @patch("backend.app.adapters.moss_audio_asr._transcribe_chunk")
     @patch("backend.app.adapters.moss_audio_asr._extract_segment")
-    @patch("backend.app.adapters.moss_audio_asr.AudioSegment")
+    @patch("backend.app.adapters.moss_audio_asr._load_audio")
     def test_fallback_without_time_markers(
         self,
-        mock_audio_seg: MagicMock,
+        mock_load_audio: MagicMock,
         mock_extract: MagicMock,
         mock_transcribe: MagicMock,
         mock_load: MagicMock,
@@ -277,12 +329,9 @@ class TestRecognizeSpeech:
 
         mock_vad.return_value = [(0, 10000)]
         mock_load.return_value = (MagicMock(), MagicMock())
+        mock_load_audio.return_value = np.zeros(160000, dtype=np.float32)
         mock_extract.return_value = np.zeros(16000, dtype=np.float32)
         mock_transcribe.return_value = "Hello world. Goodbye world."
-
-        mock_audio = MagicMock()
-        mock_audio.__len__ = MagicMock(return_value=10000)
-        mock_audio_seg.from_file.return_value = mock_audio
 
         session = tmp_path / "session"
         session.mkdir()

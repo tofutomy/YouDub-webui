@@ -200,15 +200,20 @@ def _load_vad_model():
     return _VAD_MODEL
 
 
-def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
+def _vad_segments(audio_path: str, duration_ms: int = 0) -> list[tuple[int, int]]:
     """Run FSMN-VAD and return ``[(start_ms, end_ms), ...]`` segments.
 
     Each segment is guaranteed ≤ 30 000 ms to satisfy ARK-ASR-3B's
     ``audio_max_length = 30 * 16000`` limit.  Segments shorter than
-    200 ms are dropped (likely noise).
+    200 ms are dropped (likely noise).  If VAD returns no segments or
+    a single segment covering ≥90% of the audio, falls back to
+    fixed-size 30s slicing.
     """
     vad = _load_vad_model()
-    result = vad.generate(input=audio_path, cache={})
+    result = vad.generate(
+        input=audio_path, cache={},
+        max_single_segment_time=30000,
+    )
 
     raw_segments: list[tuple[int, int]] = []
     for item in result:
@@ -224,6 +229,16 @@ def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
                 continue
             raw_segments.append((start_ms, end_ms))
 
+    # VAD 失败兜底
+    if duration_ms > 0 and len(raw_segments) <= 1:
+        if not raw_segments or raw_segments[0][1] - raw_segments[0][0] > duration_ms * 0.9:
+            logger.warning(
+                "VAD returned %d segment(s) for %d ms audio, "
+                "falling back to fixed 30s slicing",
+                len(raw_segments), duration_ms,
+            )
+            return _force_split(duration_ms)
+
     # 拆分超过 30s 的段
     MAX_MS = 30_000
     segments: list[tuple[int, int]] = []
@@ -233,6 +248,18 @@ def _vad_segments(audio_path: str) -> list[tuple[int, int]]:
             start_ms += MAX_MS
         segments.append((start_ms, end_ms))
 
+    return segments
+
+
+def _force_split(duration_ms: int, chunk_ms: int = 30_000) -> list[tuple[int, int]]:
+    """Split audio into fixed-size chunks, ignoring VAD."""
+    segments: list[tuple[int, int]] = []
+    pos = 0
+    while pos < duration_ms:
+        end = min(pos + chunk_ms, duration_ms)
+        if end - pos >= 200:
+            segments.append((pos, end))
+        pos = end
     return segments
 
 
@@ -437,14 +464,13 @@ def recognize_speech(
         return output_file
 
     vocals_path = str(vocals_file)
+    duration_ms = len(AudioSegment.from_file(vocals_file))
 
     # Step 1: VAD 切段
     logger.info("ARK-ASR: running FSMN-VAD on %s", vocals_file.name)
-    segments = _vad_segments(vocals_path)
+    segments = _vad_segments(vocals_path, duration_ms=duration_ms)
     if not segments:
-        # VAD 未检测到语音，使用整段音频
-        dur_ms = len(AudioSegment.from_file(vocals_file))
-        segments = [(0, dur_ms)]
+        segments = [(0, duration_ms)]
 
     # Step 2: 加载模型
     model, processor, tokenizer = _load_model()

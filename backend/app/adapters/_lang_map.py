@@ -91,6 +91,26 @@ LANG_TO_QWEN3: dict[str, str] = {
 }
 
 
+# ARK-ASR-3B language labels (English names expected by the model).
+# ARK-ASR supports 19 languages; we map only the ones relevant to YouDub.
+LANG_TO_ARK_ASR: dict[str, str] = {
+    "zh": "Chinese",
+    "en": "English",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "fr": "French",
+    "de": "German",
+    "es": "Spanish",
+    "pt": "Portuguese",
+    "it": "Italian",
+    "nl": "Dutch",
+    "pl": "Polish",
+}
+
+# MOSS-Audio-4B language labels (same as Qwen3 — based on Qwen3-4B backbone).
+LANG_TO_MOSS_AUDIO: dict[str, str] = LANG_TO_QWEN3.copy()
+
+
 def language_name(code: str | None, default: str = "") -> str:
     """Return the human-readable name for a language code."""
     if not code:

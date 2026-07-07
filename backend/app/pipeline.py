@@ -342,7 +342,27 @@ class PipelineRunner:
         source = get_source_for_task(task)
 
         asr_model = task.get("asr_model") or ""
-        if asr_model.startswith("qwen3asr:"):
+        if asr_model.startswith("mossaudio:"):
+            from .adapters.moss_audio_asr import recognize_speech, release_model
+
+            self.stage_message("asr", "Using MOSS-Audio-4B (transformers backend)")
+            try:
+                self.artifacts.asr_file = recognize_speech(
+                    vocals_file, session, language=source.asr_language
+                )
+            finally:
+                release_model()
+        elif asr_model.startswith("arkasr:"):
+            from .adapters.ark_asr import recognize_speech, release_model
+
+            self.stage_message("asr", "Using ARK-ASR-3B (transformers backend)")
+            try:
+                self.artifacts.asr_file = recognize_speech(
+                    vocals_file, session, language=source.asr_language
+                )
+            finally:
+                release_model()
+        elif asr_model.startswith("qwen3asr:"):
             from .adapters.qwen3_asr import recognize_speech, release_model
 
             self.stage_message("asr", "Using Qwen3-ASR (transformers backend)")

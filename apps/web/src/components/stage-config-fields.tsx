@@ -34,6 +34,8 @@ export function AsrModelSelect({ id = "asr-model", value, onChange }: AsrModelSe
           <SelectItem value="funasr:iic/SenseVoiceSmall">{t.home.asrSenseVoice}</SelectItem>
           <SelectItem value="funasr:FunAudioLLM/Fun-ASR-Nano-2512">{t.home.asrFunAsrNano}</SelectItem>
           <SelectItem value="qwen3asr:Qwen/Qwen3-ASR-1.7B">{t.home.asrQwen3Asr}</SelectItem>
+          <SelectItem value="arkasr:AutoArk-AI/ARK-ASR-3B">{t.home.asrArkAsr}</SelectItem>
+          <SelectItem value="mossaudio:MOSS-Audio-4B-Instruct">{t.home.asrMossAudio}</SelectItem>
         </SelectContent>
       </Select>
     </div>

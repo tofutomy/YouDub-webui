@@ -195,7 +195,7 @@ Summary: {summary}
 """
 
 
-_EN_TO_ZH_VALIDATION = """你是一个专业的翻译校验专家。请检查下列英中翻译的质量，指出问题并打分。
+_EN_TO_ZH_VALIDATION = """你是一个专业的翻译校验专家。你的任务是对翻译质量打分，并列出有修改必要的有问题译文。
 
 # 元信息（供理解）
 视频标题：{title}
@@ -205,14 +205,32 @@ _EN_TO_ZH_VALIDATION = """你是一个专业的翻译校验专家。请检查下
 # 翻译热词（译文必须严格遵守）
 {hotwords}
 
+# 重要原则
+只报告**有必要修改的翻译问题**。如果译文已经基本正确、通顺，即使有微小瑕疵也不要放入 issues。
+
+必须报告的问题：
+- 译文意思错误、遗漏或曲解原文
+- 热词/专有名词未遵守或不一致
+- ASR 错误未修正导致译文错误
+- 译文逻辑矛盾或严重不通顺
+
+不要报告的问题：
+- 你的修正建议和原译文几乎一样（说明译文已经足够好）
+- 译文质量足够高，不是很有必要修改
+
 # 校验维度
 1) 术语一致性：热词是否一致使用？专有名词、品牌、缩写是否前后统一？
 2) 上下文连贯性：相邻句子是否衔接自然？代词指代是否清晰？语体是否一致？
 3) 准确性：是否忠实传达原意？有无遗漏、增添或曲解？有无未修正的 ASR 错误？
-4) 流畅性：中文是否自然？有无直译腔、生硬语序、错用标点？
+4) 流畅性：中文是否自然？有无直译腔、生硬语序？
 
 # 输入格式
-user 会给你多行编号的「原文 -> 译文」对照，你需要逐句检查。
+user 会给你多行编号的原文和译文，用箭头 `->` 分隔，格式为：
+```
+0. 原文 -> 译文
+1. 原文 -> 译文
+```
+箭头左侧是原文，右侧是译文。你需要逐句检查每行的译文质量。
 
 # 输出格式（严格遵守）
 {{
@@ -231,7 +249,7 @@ user 会给你多行编号的「原文 -> 译文」对照，你需要逐句检�
 """
 
 
-_ZH_TO_EN_VALIDATION = """You are a professional translation reviewer. Check the quality of the following Chinese-to-English translations, identify issues and score them.
+_ZH_TO_EN_VALIDATION = """You are a professional translation reviewer. Your task is to score translation quality and list translations that need fixing.
 
 # Meta info (for context)
 Title: {title}
@@ -241,14 +259,32 @@ Summary: {summary}
 # Glossary (translations must strictly follow)
 {hotwords}
 
+# Important principle
+Only report issues that **actually need fixing**. If the translation is already correct and fluent, do not add it to issues even if there are minor imperfections.
+
+Must report:
+- Translation meaning is wrong, missing, or distorted
+- Glossary/proper nouns not followed or inconsistent
+- Uncorrected ASR errors causing translation errors
+- Translation has logical contradictions or is severely awkward
+
+Do NOT report:
+- Your suggested correction is almost identical to the original translation (meaning it's already good enough)
+- Translation quality is high enough that no fix is really necessary
+
 # Review dimensions
 1) Terminology consistency: Are glossary terms used consistently? Are proper nouns, brands, abbreviations uniform?
 2) Contextual coherence: Do adjacent sentences flow naturally? Are pronoun references clear? Is the register consistent?
 3) Accuracy: Does the translation faithfully convey the original meaning? Any omissions, additions, or misinterpretations? Any uncorrected ASR errors?
-4) Fluency: Is the English natural? Any translationese, awkward word order, or incorrect punctuation?
+4) Fluency: Is the English natural? Any translationese or awkward word order?
 
 # Input format
-The user will send numbered "source -> translation" pairs for you to review sentence by sentence.
+The user will send numbered source and translation pairs separated by `->`:
+```
+0. source -> translation
+1. source -> translation
+```
+The left side of the arrow is the source, the right side is the translation. Review each translation sentence by sentence.
 
 # Output format (strict)
 {{
@@ -380,7 +416,7 @@ _JA_TO_ZH_BATCH_RULES = """你是一个专业的日译中字幕翻译助手。�
 """
 
 
-_JA_TO_ZH_VALIDATION = """你是一个专业的日译中翻译校验专家。请检查下列日译中翻译的质量，指出问题并打分。
+_JA_TO_ZH_VALIDATION = """你是一个专业的日译中翻译校验专家。你的任务是对翻译质量打分，并列出有修改必要的有问题译文。
 
 # 元信息（供理解）
 视频标题：{title}
@@ -390,14 +426,32 @@ _JA_TO_ZH_VALIDATION = """你是一个专业的日译中翻译校验专家。请
 # 翻译热词（译文必须严格遵守）
 {hotwords}
 
+# 重要原则
+只报告**有必要修改的翻译问题**。如果译文已经基本正确、通顺，即使有微小瑕疵也不要放入 issues。
+
+必须报告的问题：
+- 译文意思错误、遗漏或曲解原文
+- 热词/专有名词未遵守或不一致
+- ASR 错误未修正导致译文错误
+- 译文逻辑矛盾或严重不通顺
+
+不要报告的问题：
+- 你的修正建议和原译文几乎一样（说明译文已经足够好）
+- 译文质量足够高，不是很有必要修改
+
 # 校验维度
 1) 术语一致性：热词是否一致使用？专有名词、品牌、缩写是否前后统一？
 2) 上下文连贯性：相邻句子是否衔接自然？代词指代是否清晰？语体是否一致？
 3) 准确性：是否忠实传达日语原意？有无遗漏、增添或曲解？有无未修正的 ASR 错误？片假名翻译是否恰当？
-4) 流畅性：中文是否自然？有无直译腔、生硬语序、错用标点？敬語是否适当体现？拟声拟态是否贴切？
+4) 流畅性：中文是否自然？有无直译腔、生硬语序？敬語是否适当体现？拟声拟态是否贴切？
 
 # 输入格式
-user 会给你多行编号的「日语原文 -> 中文译文」对照，你需要逐句检查。
+user 会给你多行编号的日语原文和中文译文，用箭头 `->` 分隔，格式为：
+```
+0. 日语原文 -> 中文译文
+1. 日语原文 -> 中文译文
+```
+箭头左侧是原文，右侧是译文。你需要逐句检查每行的译文质量。
 
 # 输出格式（严格遵守）
 {{

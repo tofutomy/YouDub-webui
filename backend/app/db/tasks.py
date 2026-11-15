@@ -54,16 +54,18 @@ def create_task(
     filter_fillers: bool = False,
     demucs_model: str | None = None,
     demucs_shifts: int = 1,
+    storage_workdir: str | None = None,
+    firefox_profile: str | None = None,
 ) -> str:
     new_id = task_id or str(uuid.uuid4())
     created_at = now_iso()
     with connect() as conn:
         conn.execute(
             """
-            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate, filter_fillers, demucs_model, demucs_shifts)
-            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO tasks (id, url, status, current_stage, created_at, asr_language, target_language, add_subtitles, asr_model, translate_mode, validate_translation, tts_mode, translate_provider_id, stop_after_translate, filter_fillers, demucs_model, demucs_shifts, storage_workdir, firefox_profile)
+            VALUES (?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate), int(filter_fillers), demucs_model, demucs_shifts),
+            (new_id, url, STAGES[0].name, created_at, asr_language, target_language, int(add_subtitles), asr_model, translate_mode, int(validate_translation), tts_mode, translate_provider_id, int(stop_after_translate), int(filter_fillers), demucs_model, demucs_shifts, storage_workdir, firefox_profile),
         )
         conn.executemany(
             """
@@ -78,7 +80,7 @@ def create_task(
 def find_task_by_video_id(video_id: str) -> str | None:
     with connect() as conn:
         row = conn.execute(
-            "SELECT id FROM tasks WHERE id = ? OR url LIKE ? "
+            "SELECT id FROM tasks WHERE storage_workdir IS NULL AND (id = ? OR url LIKE ?) "
             "ORDER BY created_at DESC, rowid DESC LIMIT 1",
             (video_id, f"%{video_id}%"),
         ).fetchone()

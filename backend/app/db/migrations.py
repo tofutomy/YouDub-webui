@@ -95,6 +95,10 @@ def init_db() -> None:
                 (f"ytdlp.{key}", value, now_iso()),
             )
         task_columns = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)").fetchall()}
+        if "storage_workdir" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN storage_workdir TEXT")
+        if "firefox_profile" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN firefox_profile TEXT")
         if "title" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN title TEXT")
         if "asr_language" not in task_columns:

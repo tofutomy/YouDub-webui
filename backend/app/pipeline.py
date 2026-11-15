@@ -309,7 +309,17 @@ class PipelineRunner:
             from .adapters.ytdlp import download_video
 
             proxy_port = database.get_ytdlp_settings()["proxy_port"]
-            session, info = download_video(task["url"], WORKFOLDER, source, proxy_port)
+            if storage_workdir := task.get("storage_workdir"):
+                shared_root = Path(storage_workdir)
+                session, info = download_video(
+                    task["url"], shared_root, source, proxy_port,
+                    firefox_profile=Path(task["firefox_profile"]),
+                    managed_task_id=self.task_id,
+                    saved_session=Path(task["session_path"]) if task.get("session_path") else None,
+                    on_session=lambda path: database.update_task(self.task_id, session_path=str(path)),
+                )
+            else:
+                session, info = download_video(task["url"], WORKFOLDER, source, proxy_port)
         self.artifacts.session = session
         self.artifacts.video_file = session / "media" / "video_source.mp4"
         title = (info.get("title") or "").strip() or None

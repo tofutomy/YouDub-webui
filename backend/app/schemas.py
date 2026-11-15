@@ -16,6 +16,12 @@ class TaskCreate(BaseModel):
     config: TaskConfig = TaskConfig()
 
 
+class ManagedYouTubeTaskCreate(TaskCreate):
+    job_id: str
+    work_directory: str
+    firefox_profile: str
+
+
 class LocaldirTaskCreate(BaseModel):
     file_path: str
     config: TaskConfig = TaskConfig()

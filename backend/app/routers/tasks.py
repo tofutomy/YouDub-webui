@@ -7,14 +7,16 @@ video artifact.
 
 from __future__ import annotations
 
+import re
 import shutil
+import sqlite3
 import threading
 import uuid
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
 
 from .. import database, worker
@@ -38,6 +40,7 @@ from ..youtube import (
 )
 from ..schemas import (
     LocaldirTaskCreate,
+    ManagedYouTubeTaskCreate,
     TaskCreate,
 )
 
@@ -109,6 +112,41 @@ def create_task(payload: TaskCreate) -> dict[str, Any]:
         task_id=video_id,
         **_config_fields_or_422(payload.config),
     )
+    worker.enqueue(task_id)
+    return _require_task(task_id)
+
+
+@router.post("/managed-youtube", status_code=201)
+def create_managed_youtube_task(payload: ManagedYouTubeTaskCreate, request: Request) -> dict[str, Any]:
+    """为本机制作工作台创建共享文件的 YouTube 任务。"""
+    if request.client is None or request.client.host not in {"127.0.0.1", "::1"} or request.headers.get("origin"):
+        raise HTTPException(status_code=403, detail="Managed tasks require a local server request.")
+    if not re.fullmatch(r"[0-9a-f]{32}", payload.job_id):
+        raise HTTPException(status_code=422, detail="Invalid workbench job ID.")
+    if not re.fullmatch(r"https://www\.youtube\.com/watch\?v=[A-Za-z0-9_-]{11}", payload.url):
+        raise HTTPException(status_code=422, detail="Expected a canonical YouTube video URL.")
+    workdir = Path(payload.work_directory)
+    profile = Path(payload.firefox_profile)
+    if not workdir.is_absolute() or not profile.is_absolute() or profile.name != "youtube-firefox-profile":
+        raise HTTPException(status_code=422, detail="Invalid work directory or dedicated Firefox profile.")
+    paths = {"storage_workdir": str(workdir.resolve()), "firefox_profile": str(profile.resolve())}
+    task_id = f"lootgamevideo-{payload.job_id}"
+
+    def existing_task():
+        existing = database.get_task(task_id)
+        if existing and (existing["url"] != payload.url or any(existing[key] != value for key, value in paths.items())):
+            raise HTTPException(status_code=409, detail="This workbench job is already bound to a different source or directory.")
+        return existing
+
+    if existing := existing_task():
+        return existing
+    _ensure_runtime_ready()
+    try:
+        database.create_task(payload.url, task_id=task_id, **paths, **_config_fields_or_422(payload.config))
+    except sqlite3.IntegrityError:
+        if existing := existing_task():
+            return existing
+        raise
     worker.enqueue(task_id)
     return _require_task(task_id)
 
@@ -283,6 +321,12 @@ def rerun_task(task_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail="Cannot rerun a running task.")
 
     _ensure_runtime_ready()
+    if task.get("storage_workdir"):
+        # 保留共享目录和原片，重跑阶段时继续复用该任务。
+        database.reset_stage_for_rerun(task_id, "download")
+        worker.cleanup_stop(task_id)
+        worker.enqueue(task_id)
+        return _require_task(task_id)
     url = task["url"]
     # Preserve config before purging so the new task inherits user settings.
     preserved_config = TaskConfig.from_task_dict(task)

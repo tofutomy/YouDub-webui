@@ -205,6 +205,12 @@ def download_video(
         metadata = ydl.sanitize_info(info)
     metadata_file.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    if source.name == "youtube":
+        from .youtube_assets import download_youtube_assets
+
+        with yt_dlp.YoutubeDL({**info_opts, "socket_timeout": 10}) as assets_client:
+            download_youtube_assets(assets_client, info, session)
+
     if video_file.exists() and video_file.stat().st_size > 0:
         return session, info
 

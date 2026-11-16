@@ -151,6 +151,11 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 - 重复提交同一个视频时，后端会把本次提交的方向和 ASR 模型同步回旧任务，然后返回旧任务。
 - 旧任务可能缺少 `asr_language/target_language`，会按默认 `en -> zh` 解析。如果实际方向不同，需在任务详情保存正确方向后重跑相关阶段。
 
+## YouTube 原字幕和封面
+
+- 新 YouTube 下载同时保存原版英文轨 `metadata/source.en.vtt` 和原封面 `media/cover_source.jpg`。英文字幕优先人工上传，其次 YouTube 英文自动转录，排除翻译轨。
+- 英文转录切句后用原字幕校对高置信用词，自动字幕只纠正命中任务词库的术语，沿用切句时间、说话人和配音阶段。校对记录存入 `metadata/asr_fixed.json` 的 `source_caption_corrections`。缺少字幕或封面仍可继续制作。
+
 ## 翻译术语表
 
 - 新建任务或在任务详情的翻译阶段设置选择内置游戏词表。自动模式按原片标题和简介识别游戏。

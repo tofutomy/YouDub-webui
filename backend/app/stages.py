@@ -18,7 +18,8 @@ STAGES: tuple[StageSpec, ...] = (
     StageSpec(
         "download",
         "Download",
-        outputs=("media/video_source.mp4", "metadata/ytdlp_info.json", "metadata/local_info.json"),
+        outputs=("media/video_source.mp4", "metadata/ytdlp_info.json", "metadata/local_info.json",
+                 "metadata/source.en.vtt", "metadata/source.en.info.json", "media/cover_source.jpg"),
     ),
     StageSpec(
         "separate",

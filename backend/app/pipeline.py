@@ -325,6 +325,13 @@ class PipelineRunner:
         title = (info.get("title") or "").strip() or None
         database.update_task(self.task_id, session_path=str(session), title=title)
         self.stage_message("download", f"[{source.name}] {title or 'Downloaded'} -> {session}")
+        if source.name == "youtube":
+            from .adapters.youtube_assets import CAPTION, COVER
+
+            if (session / CAPTION).is_file():
+                self.stage_message("download", "已保存原视频英文字幕")
+            if (session / COVER).is_file():
+                self.stage_message("download", "已保存原视频封面")
 
     def _separate(self, task: dict) -> None:
         from .adapters.demucs import separate_audio
@@ -428,6 +435,15 @@ class PipelineRunner:
             asr_file, session, language=source.asr_language,
             filter_fillers=do_filter,
         )
+        if source.name == "youtube" and source.asr_language == "en":
+            from .adapters.youtube_assets import CAPTION, apply_caption_corrections
+
+            if (session / CAPTION).is_file():
+                corrected = apply_caption_corrections(
+                    self.artifacts.asr_fixed_file, session,
+                    task.get("translation_glossary"), task.get("translation_terms") or "",
+                )
+                self.stage_message("asr_fix", f"原版英文字幕校对了 {corrected} 个转录词")
         sentences = _json.loads(self.artifacts.asr_fixed_file.read_text(encoding="utf-8"))["result"]["utterances"]
         filter_tag = " +fillers-filtered" if do_filter else ""
         self.stage_message(

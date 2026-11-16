@@ -444,6 +444,9 @@ class PipelineRunner:
         provider_id = task.get("translate_provider_id")
         settings = database.get_translate_provider_settings(provider_id)
         settings["translate_mode"] = task.get("translate_mode") or "sentence"
+        settings["translation_glossary"] = task.get("translation_glossary") or "auto"
+        settings["translation_terms"] = task.get("translation_terms") or ""
+        settings["glossary_title"] = task.get("title") or ""
         settings["validation_enabled"] = "true" if task.get("validate_translation") else ""
         source = get_source_for_task(task)
         validation_tag = " +validation" if task.get("validate_translation") else ""

@@ -82,6 +82,8 @@ export type Task = {
   validate_translation: number | null
   tts_mode: string | null
   translate_provider_id: string | null
+  translation_glossary: string | null
+  translation_terms: string | null
   stop_after_translate: number | null
   filter_fillers: number | null
   demucs_model: string | null
@@ -138,6 +140,8 @@ export type StageConfig = {
   validate_translation: boolean
   tts_mode: string
   translate_provider_id: string
+  translation_glossary: string
+  translation_terms: string
   stop_after_translate: boolean
   filter_fillers: boolean
   demucs_model: string

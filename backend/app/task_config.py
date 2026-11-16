@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
-_CLEAR_ON_NULL = frozenset({"asr_model", "tts_mode", "translate_provider_id", "demucs_model"})
+from .glossary import GlossaryId, parse_custom_terms
+
+_CLEAR_ON_NULL = frozenset({"asr_model", "tts_mode", "translate_provider_id", "demucs_model",
+                            "translation_glossary", "translation_terms"})
 _EMPTY_TO_NONE = frozenset({"asr_model", "translate_mode", "tts_mode", "translate_provider_id", "demucs_model"})
 _BOOL_TO_INT = frozenset({"add_subtitles", "validate_translation", "stop_after_translate", "filter_fillers"})
 
@@ -18,10 +21,19 @@ class TaskConfig(BaseModel):
     validate_translation: bool | None = None
     tts_mode: str | None = None
     translate_provider_id: str | None = None
+    translation_glossary: GlossaryId | None = None
+    translation_terms: str | None = Field(default=None, max_length=12000)
     stop_after_translate: bool | None = None
     filter_fillers: bool | None = None
     demucs_model: str | None = None
     demucs_shifts: int | None = None
+
+    @field_validator("translation_terms")
+    @classmethod
+    def validate_translation_terms(cls, value: str | None) -> str | None:
+        if value:
+            parse_custom_terms(value)
+        return value
 
     def to_db_fields(self, only_set: bool = False) -> dict[str, Any]:
         fields: dict[str, Any] = {}
@@ -54,6 +66,8 @@ class TaskConfig(BaseModel):
             validate_translation=bool(task.get("validate_translation")),
             tts_mode=task.get("tts_mode"),
             translate_provider_id=task.get("translate_provider_id"),
+            translation_glossary=task.get("translation_glossary"),
+            translation_terms=task.get("translation_terms"),
             stop_after_translate=bool(task.get("stop_after_translate")),
             filter_fillers=bool(task.get("filter_fillers")),
             demucs_model=task.get("demucs_model"),

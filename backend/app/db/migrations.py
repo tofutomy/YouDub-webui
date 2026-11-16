@@ -117,6 +117,10 @@ def init_db() -> None:
             conn.execute("ALTER TABLE tasks ADD COLUMN validate_translation INTEGER DEFAULT 0")
         if "tts_mode" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN tts_mode TEXT")
+        if "translation_glossary" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN translation_glossary TEXT")
+        if "translation_terms" not in task_columns:
+            conn.execute("ALTER TABLE tasks ADD COLUMN translation_terms TEXT")
         if "translate_provider_id" not in task_columns:
             conn.execute("ALTER TABLE tasks ADD COLUMN translate_provider_id TEXT")
         if "stop_after_translate" not in task_columns:

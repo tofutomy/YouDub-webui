@@ -151,6 +151,14 @@ download -> separate -> asr -> asr_fix -> translate -> split_audio -> tts -> mer
 - 重复提交同一个视频时，后端会把本次提交的方向和 ASR 模型同步回旧任务，然后返回旧任务。
 - 旧任务可能缺少 `asr_language/target_language`，会按默认 `en -> zh` 解析。如果实际方向不同，需在任务详情保存正确方向后重跑相关阶段。
 
+## 翻译术语表
+
+- 新建任务或在任务详情的翻译阶段设置选择内置游戏词表。自动模式按原片标题和简介识别游戏。
+- API 的 TaskConfig 支持 `translation_glossary` 和 `translation_terms`。自定义术语一行一组，用制表符或 `=>` 分隔，覆盖对应内置译名。仅在翻译为中文时生效。
+- 游戏词库随代码存放在 `backend/app/glossaries/`，每个游戏一份 JSON。`terms` 和 `effects` 是资料站条目。`fallback_terms` 补充资料站缺项，`overrides` 保留已核对的官方译名，`aliases` 保存缩写和别名。
+- 在仓库根目录运行 `python -B scripts/refresh_game_glossaries.py` 刷新全部资料站条目，或附加游戏 ID 刷新单套。刷新保留人工维护的字段。每套含来源、类别、配对数量和抓取时刻。更新失败时保留已有词库。
+- 扩展词库的译名和效果只来源于资料站、公开结构化数据或同版本的游戏本地化表。字幕只用于检索。已生成的字幕要应用新词库，请清理翻译阶段结果并重跑相关下游阶段。
+
 ## 字幕选项
 
 - 任务创建时可设置 `add_subtitles`（布尔值，默认 `true`）。

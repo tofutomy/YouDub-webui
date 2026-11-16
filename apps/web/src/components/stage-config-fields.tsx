@@ -1,5 +1,6 @@
 "use client"
 
+import { useId } from "react"
 import { useI18n } from "@/lib/i18n"
 import { SUPPORTED_DIRECTIONS, type Direction } from "@/lib/directions"
 import { Label } from "@/components/ui/label"
@@ -98,6 +99,41 @@ export function TranslateModeSelect({ id = "translate-mode", value, onChange }: 
           <SelectItem value="batch">{t.home.translateModeBatch}</SelectItem>
         </SelectContent>
       </Select>
+    </div>
+  )
+}
+
+
+export function GlossaryFields({ value, terms, onChange }: {
+  value: string
+  terms: string
+  onChange: (values: { translation_glossary?: string; translation_terms?: string }) => void
+}) {
+  const { t } = useI18n()
+  const id = useId()
+  const options = [
+    ["auto", t.home.glossaryAuto], ["poe1", "Path of Exile 1 / 流放之路 1"],
+    ["poe2", "Path of Exile 2 / 流放之路 2"], ["last_epoch", "Last Epoch / 最后纪元"],
+    ["diablo4", "Diablo IV / 暗黑破坏神 IV"], ["none", t.home.glossaryNone],
+  ]
+  return (
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <Label htmlFor={id}>{t.home.glossaryLabel}</Label>
+        <Select value={value} onValueChange={(v) => onChange({ translation_glossary: v ?? "auto" })}>
+          <SelectTrigger id={id} className="h-10"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {options.map(([key, label]) => <SelectItem key={key} value={key}>{label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor={id + "-terms"}>{t.home.glossaryCustom}</Label>
+        <textarea id={id + "-terms"} rows={3} maxLength={12000} value={terms}
+          className="w-full rounded-md border bg-background p-2 text-sm"
+          onChange={(event) => onChange({ translation_terms: event.target.value })} />
+        <p className="text-xs text-muted-foreground">{t.home.glossaryHint}</p>
+      </div>
     </div>
   )
 }

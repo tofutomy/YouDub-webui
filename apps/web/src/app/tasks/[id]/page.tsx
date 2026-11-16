@@ -29,6 +29,7 @@ import {
   rerunSingleStage,
   rerunStage,
   rerunTask,
+  getTask,
   resumeTask,
   stopTask,
   updateTaskConfig,

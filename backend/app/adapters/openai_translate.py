@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +12,7 @@ from openai import BadRequestError, OpenAI
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from ..sources import SourceConfig
+from ..glossary import select_glossary
 from ._translate_prompts import (
     PREPROCESS_PROMPT,
     get_translate_rules,
@@ -184,7 +186,7 @@ def preprocess(
     last_error: Exception | None = None
     for attempt in range(PREPROCESS_RETRY + 1):
         try:
-            data = _call_json(client, model, "You output strict JSON only.", user)
+            data = _call_json(client, model, "You output strict JSON only." + meta.get("_glossary", ""), user)
             result = PreprocessResponse.model_validate(data)
             if result.summary.strip():
                 return result
@@ -198,6 +200,11 @@ def preprocess(
     return PreprocessResponse()
 
 
+def _segment_glossary(meta: dict[str, Any], texts: list[str]) -> str:
+    glossary = meta.get("_glossary_context")
+    return glossary.prompt(texts) if glossary else ""
+
+
 def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
     rules = get_translate_rules(source.asr_language, source.target_language)
     return rules.format(
@@ -206,7 +213,7 @@ def _translate_system(source: SourceConfig, meta: dict[str, Any], pre: Preproces
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
         **_meta_view(meta),
-    )
+    ) + ("" if "_glossary_context" in meta else meta.get("_glossary", ""))
 
 
 _LEADING_NUM_RE = re.compile(r"^\d{1,3}\s*[.、．]\s*")
@@ -267,7 +274,8 @@ def translate_batch(
     results: list[str] = [""] * len(texts)
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         future_to_idx = {
-            pool.submit(translate_sentence, t, source.target_language, client, model, system): i
+            pool.submit(translate_sentence, t, source.target_language, client, model,
+                        system + _segment_glossary(meta, [t])): i
             for i, t in enumerate(texts)
         }
         for future in as_completed(future_to_idx):
@@ -286,6 +294,7 @@ def _translate_batch_context_chunk(
     model: str,
     system: str,
     expected_count: int,
+    glossary: str = "",
 ) -> list[str]:
     user = "\n".join(f"{i + 1}. {t}" for i, t in enumerate(chunk))
     last_error: Exception | None = None
@@ -327,7 +336,7 @@ def _translate_batch_context_chunk(
     )
     return [
         _post_process(
-            translate_sentence(t, target_language, client, model, system_single),
+            translate_sentence(t, target_language, client, model, system_single + glossary),
             target_language,
             src=t,
         )
@@ -363,7 +372,7 @@ def translate_batch_context(
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
         **_meta_view(meta),
-    )
+    ) + ("" if "_glossary_context" in meta else meta.get("_glossary", ""))
     client = _client(base_url, api_key)
 
     # 非对称边缘丢弃策略：每批发送 batch_size 句给 LLM，但仅保留中间部分。
@@ -407,8 +416,11 @@ def translate_batch_context(
 
     def _do_chunk(item: tuple[int, list[str]]) -> tuple[int, list[str]]:
         idx, chunk = item
+        hint = _segment_glossary(meta, chunk)
+        fallback_hint = hint if "_glossary_context" in meta else meta.get("_glossary", "")
         result = _translate_batch_context_chunk(
-            chunk, source.asr_language, source.target_language, client, model, system, len(chunk),
+            chunk, source.asr_language, source.target_language, client, model, system + hint, len(chunk),
+            **({"glossary": fallback_hint} if fallback_hint else {}),
         )
         return (idx, result)
 
@@ -477,7 +489,7 @@ def _validation_system(source: SourceConfig, meta: dict[str, Any], pre: Preproce
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         **_meta_view(meta),
-    )
+    ) + ("" if "_glossary_context" in meta else meta.get("_glossary", ""))
 
 
 def _correction_system(source: SourceConfig, meta: dict[str, Any], pre: PreprocessResponse) -> str:
@@ -487,7 +499,7 @@ def _correction_system(source: SourceConfig, meta: dict[str, Any], pre: Preproce
         summary=pre.summary or "(none)",
         hotwords=_format_terms(pre.hotwords, "{src} -> {dst}", "(none)"),
         **_meta_view(meta),
-    )
+    ) + ("" if "_glossary_context" in meta else meta.get("_glossary", ""))
 
 
 VALIDATE_RETRY = 2
@@ -505,7 +517,7 @@ def validate_batch(
     model: str,
 ) -> ValidationBatchResult:
     """Validate a batch of translations and return issues + score."""
-    system = _validation_system(source, meta, pre)
+    system = _validation_system(source, meta, pre) + _segment_glossary(meta, src_texts)
     lines = []
     for i, (src, dst) in enumerate(zip(src_texts, dst_texts)):
         lines.append(f"{i}. {src} -> {dst}")
@@ -539,7 +551,7 @@ def correct_sentence(
     model: str,
 ) -> str:
     """Correct a single translation based on validation feedback."""
-    system = _correction_system(source, meta, pre)
+    system = _correction_system(source, meta, pre) + _segment_glossary(meta, [src_text])
     user = (
         f"原文：{src_text}\n"
         f"原译文：{dst_text}\n"
@@ -743,10 +755,11 @@ def _save_validation_checkpoint(
 
 
 def _read_meta(session: Path) -> dict[str, Any]:
-    info_file = session / "metadata" / "ytdlp_info.json"
-    if not info_file.exists():
-        return {}
-    return json.loads(info_file.read_text(encoding="utf-8"))
+    for filename in ("ytdlp_info.json", "local_info.json"):
+        info_file = session / "metadata" / filename
+        if info_file.is_file():
+            return json.loads(info_file.read_text(encoding="utf-8"))
+    return {}
 
 
 def _speaker(utt: dict[str, Any]) -> str:
@@ -822,6 +835,26 @@ def translate_asr(
     texts = [u["text"].strip() for u in utterances]
     full_text = _full_text(data, texts)
     meta = _read_meta(session)
+    meta.pop("_glossary", None)
+    meta.pop("_glossary_context", None)
+    if not meta.get("title") and settings.get("glossary_title"):
+        meta["title"] = settings["glossary_title"]
+    terms = settings.get("translation_terms", "")
+    glossary = select_glossary(
+        settings.get("translation_glossary"), meta, terms, target_language=source.target_language,
+    )
+    hint = glossary.prompt(texts[:120] if glossary.expanded else texts)
+    if hint:
+        meta["_glossary"] = hint
+    if glossary.expanded:
+        meta["_glossary_context"] = glossary
+    if hint or glossary.expanded:
+        # 扩展词库按段匹配，断点也绑定词库快照，防止继续沿用旧译名。
+        fingerprint = repr((glossary.revision, terms)) if glossary.expanded else hint
+        digest = hashlib.sha256(fingerprint.encode("utf-8")).hexdigest()[:12]
+        checkpoint_file = checkpoint_file.with_name(f"translation.{source.target_language}.{digest}.checkpoint.json")
+        validation_checkpoint = validation_checkpoint.with_name(f"validation.{digest}.checkpoint.json")
+        log.info("已加载游戏术语表：%s", glossary.selected)
 
     api = {key: settings[key] for key in API_SETTING_KEYS if key in settings}
     pre_file = session / "metadata" / "preprocess.json"

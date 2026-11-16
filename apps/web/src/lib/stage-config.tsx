@@ -7,6 +7,7 @@ import {
   DirectionSelect,
   SeparateModeSelect,
   TranslateModeSelect,
+  GlossaryFields,
   TranslateProviderSelect,
   ValidateTranslationCheckbox,
   StopAfterTranslateCheckbox,
@@ -34,6 +35,8 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   filter_fillers: false,
   tts_mode: "controllable_clone",
   translate_provider_id: "",
+  translation_glossary: "auto",
+  translation_terms: "",
   demucs_model: "",
   demucs_shifts: 1,
 }
@@ -52,6 +55,8 @@ export function configFromTask(task: Task): StageConfig {
     filter_fillers: task.filter_fillers === 1,
     tts_mode: task.tts_mode || "controllable_clone",
     translate_provider_id: task.translate_provider_id || "",
+    translation_glossary: task.translation_glossary || "auto",
+    translation_terms: task.translation_terms || "",
     demucs_model: task.demucs_model || "",
     demucs_shifts: task.demucs_shifts ?? 1,
   }
@@ -114,6 +119,12 @@ export const STAGE_FIELDS: Record<string, StageFieldDef[]> = {
     },
   ],
   translate: [
+    {
+      keys: ["translation_glossary", "translation_terms"],
+      render: ({ config, onChange }) => (
+        <GlossaryFields value={config.translation_glossary} terms={config.translation_terms} onChange={onChange} />
+      ),
+    },
     {
       keys: ["translate_provider_id"],
       render: ({ config, onChange, providerOptions }) => (

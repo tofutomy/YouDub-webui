@@ -18,6 +18,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
+from pydantic import ValidationError
 
 from .. import database, worker
 from ..adapters.local_video import remove_upload, upload_dir
@@ -192,7 +193,10 @@ def upload_local_video(
     uploaded file is saved to ``WORKFOLDER/_uploads/<task_id>/`` and
     automatically transcoded to h.264+aac MP4 by the pipeline.
     """
-    cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
+    try:
+        cfg = TaskConfig.model_validate_json(config) if config else TaskConfig()
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail=exc.errors(include_context=False, include_input=False)) from exc
     fields = _config_fields_or_422(cfg)
     direction = language_pair_to_direction(fields["asr_language"], fields["target_language"])
 

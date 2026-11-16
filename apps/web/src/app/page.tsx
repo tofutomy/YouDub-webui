@@ -42,6 +42,8 @@ const STRING_CONFIG_KEYS: (keyof StageConfig)[] = [
   "translate_mode",
   "tts_mode",
   "translate_provider_id",
+  "translation_glossary",
+  "translation_terms",
   "demucs_model",
 ]
 const BOOLEAN_CONFIG_KEYS: (keyof StageConfig)[] = [
@@ -119,16 +121,19 @@ export default function Home() {
   const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
 
-  // 客户端挂载后从 localStorage 恢复用户保存的配置
+  // 首次渲染完成后在客户端恢复本机保存的配置
   useEffect(() => {
-    try {
-      const saved = defaultConfigFromStorage(
-        window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
-      )
-      if (saved) setConfig(saved)
-    } catch {
-      // localStorage 不可用时忽略
-    }
+    const restore = window.setTimeout(() => {
+      try {
+        const saved = defaultConfigFromStorage(
+          window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
+        )
+        if (saved) setConfig(saved)
+      } catch {
+        // localStorage 不可用时忽略
+      }
+    }, 0)
+    return () => window.clearTimeout(restore)
   }, [])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")

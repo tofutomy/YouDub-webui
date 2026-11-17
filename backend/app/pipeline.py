@@ -529,7 +529,11 @@ class PipelineRunner:
         session = _require(self.artifacts.session, "session")
         translation_file = _require(self.artifacts.translation_file, "translation_file")
         tts_dir = _require(self.artifacts.tts_dir, "tts_dir")
-        dubbing, timings = merge_tts_audio(translation_file, tts_dir, session)
+        video_file = _require(self.artifacts.video_file, "video_file")
+        dubbing, timings = merge_tts_audio(
+            translation_file, tts_dir, session, video_file=video_file,
+            progress_callback=lambda progress, message: self.stage_progress("merge_audio", progress, message),
+        )
         self.artifacts.dubbing_file = dubbing
         self.artifacts.timings_file = timings
         self.stage_message("merge_audio", f"Dubbing -> {dubbing.name}, timings -> {timings.name}")

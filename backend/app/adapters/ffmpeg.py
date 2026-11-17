@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import subprocess
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from ..config import ffmpeg_binary, ffprobe_binary
 
@@ -12,7 +14,6 @@ SUBTITLE_PROTECTED_PAIRS = {"《": "》", "（": "）", "【": "】", "「": "�
 SUBTITLE_CLOSING_QUOTES = {'"', "'", "」", "』", "》", "）", "】", "\u201d", "\u2019", "]"}
 SUBTITLE_MIN_FRAGMENT_LEN = 5
 SUBTITLE_MIN_DURATION_MS = 200
-SUBTITLE_TAIL_BUFFER_MS = 100
 SUBTITLE_DURATION_FLOOR_MS = 600
 
 
@@ -131,17 +132,16 @@ def _allocate_durations(fragments: list[str], total_duration: int) -> list[int]:
     weights = [max(1, len(f.replace(" ", ""))) for f in fragments]
     total_weight = sum(weights)
     durations: list[int] = []
-    allocated = 0
-    for i, weight in enumerate(weights[:-1]):
+    remaining = total_duration
+    minimum = SUBTITLE_MIN_DURATION_MS if total_duration >= SUBTITLE_DURATION_FLOOR_MS else SUBTITLE_MIN_DURATION_MS // 2
+    minimum = min(minimum, total_duration // len(fragments))
+    for index, weight in enumerate(weights[:-1]):
         share = round(total_duration * weight / total_weight)
-        if total_duration >= SUBTITLE_DURATION_FLOOR_MS:
-            ceiling = total_duration - allocated - SUBTITLE_TAIL_BUFFER_MS
-            share = max(SUBTITLE_MIN_DURATION_MS, min(share, ceiling))
-        else:
-            share = max(int(SUBTITLE_MIN_DURATION_MS / 2), share)
-        durations.append(share)
-        allocated += share
-    durations.append(max(SUBTITLE_TAIL_BUFFER_MS, total_duration - allocated))
+        ceiling = remaining - minimum * (len(fragments) - index - 1)
+        allocated = max(minimum, min(share, ceiling))
+        durations.append(allocated)
+        remaining -= allocated
+    durations.append(remaining)
     return durations
 
 
@@ -177,6 +177,8 @@ def write_srt(translation_file: Path, session: Path) -> Path:
         fragments = split_subtitle_text(_dst_text(item))
         if not fragments:
             continue
+        if len(fragments) * 100 > end - start:
+            fragments = [_dst_text(item).strip()]
         cursor = start
         for fragment, duration in zip(fragments, _allocate_durations(fragments, end - start)):
             lines.extend([str(idx), f"{_srt_time(cursor)} --> {_srt_time(cursor + duration)}", fragment, ""])
@@ -184,6 +186,24 @@ def write_srt(translation_file: Path, session: Path) -> Path:
             idx += 1
     output_file.write_text("\n".join(lines), encoding="utf-8")
     return output_file
+
+
+def probe_video_duration(video_file: Path) -> float:
+    result = subprocess.run(
+        [ffprobe_binary(), "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=duration:format=duration", "-of", "json", str(video_file)],
+        capture_output=True, text=True, check=True,
+    )
+    data = json.loads(result.stdout)
+    # 优先使用画面流的时长，封装总时长有时会被较长的原声拉长。
+    for entry in [*data.get("streams", []), data.get("format", {})]:
+        try:
+            duration = float(entry.get("duration", "nan"))
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(duration) and duration > 0:
+            return duration
+    raise RuntimeError("无法确定原视频画面的时长。")
 
 
 def probe_video_size(video_file: Path) -> tuple[int, int] | None:
@@ -248,15 +268,10 @@ def subtitle_filter(video_file: Path, subtitle_file: Path, session: Path) -> str
 
 
 def _find_or_generate_srt(session: Path, timings_file: Path) -> Path | None:
-    """Find SRT generated during translate stage, or fallback to generating from timings."""
-    metadata_dir = session / "metadata"
-    # Look for existing SRT files
-    for srt in metadata_dir.glob("subtitles.*.srt"):
-        return srt
-    # Fallback: generate from timings (for backward compatibility with old tasks)
+    # 成片字幕和配音使用同一份最终时间轴，兼容只有旧字幕的任务。
     if timings_file.exists():
         return write_srt(timings_file, session)
-    return None
+    return next((session / "metadata").glob("subtitles.*.srt"), None)
 
 
 def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_file: Path, session: Path, *, add_subtitles: bool = True) -> Path:
@@ -266,7 +281,10 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     media_dir.mkdir(parents=True, exist_ok=True)
     final_video = media_dir / "video_final.mp4"
     if final_video.exists():
-        return final_video
+        last_render = final_video.stat().st_mtime_ns
+        inputs = (video_file, dubbing_file, bgm_file, timings_file)
+        if all(path.stat().st_mtime_ns <= last_render for path in inputs if path.exists()):
+            return final_video
 
     session_dir = session.resolve()
     video_input = video_file.resolve()
@@ -275,6 +293,11 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     mixed_audio = tmp_dir / "audio_mixed.m4a"
     mixed_audio_output = mixed_audio.resolve()
     final_video_output = final_video.resolve()
+    if dubbing_input.is_file():
+        import soundfile as sf
+
+        if sf.info(dubbing_input).duration > probe_video_duration(video_input):
+            raise RuntimeError("配音轨超过原视频长度。请从「合并音频」级联重跑，避免成片截去片尾配音。")
     subprocess.run(
         [
             ffmpeg_binary(),
@@ -305,7 +328,6 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     ]
 
     if add_subtitles:
-        # Read SRT generated during the translate stage (or fallback to generating from timings)
         subtitles = _find_or_generate_srt(session, timings_file)
         if subtitles:
             cmd.extend(["-vf", subtitle_filter(video_input, subtitles, session_dir)])
@@ -325,9 +347,14 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
         "aac",
         "-movflags",
         "+faststart",
+        "-af",
+        "apad",
         "-shortest",
-        str(final_video_output),
     ])
 
-    subprocess.run(cmd, check=True, cwd=session_dir)
+    # 渲染失败时保留上一版成片，完成后再一次性替换。
+    with TemporaryDirectory(prefix="render-", dir=media_dir) as staging:
+        output = Path(staging).resolve() / final_video.name
+        subprocess.run([*cmd, str(output)], check=True, cwd=session_dir)
+        output.replace(final_video_output)
     return final_video

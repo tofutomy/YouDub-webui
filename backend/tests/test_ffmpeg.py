@@ -82,6 +82,7 @@ def test_merge_video_burns_portrait_subtitles(monkeypatch, tmp_path):
         cwd_values.append(kwargs.get("cwd"))
         if cmd[0] == "ffprobe":
             return subprocess.CompletedProcess(cmd, 0, stdout="720,1280\n", stderr="")
+        Path(cmd[-1]).touch()
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(ffmpeg.subprocess, "run", fake_run)
@@ -135,6 +136,7 @@ def test_merge_video_uses_absolute_media_paths_when_cwd_is_session(monkeypatch, 
         cwd_values.append(kwargs.get("cwd"))
         if cmd[0] == "ffprobe":
             return subprocess.CompletedProcess(cmd, 0, stdout="720,1280\n", stderr="")
+        Path(cmd[-1]).touch()
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
     monkeypatch.setattr(ffmpeg.subprocess, "run", fake_run)

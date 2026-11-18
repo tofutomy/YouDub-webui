@@ -114,7 +114,18 @@ export function GlossaryFields({ value, terms, onChange }: {
   const options = [
     ["auto", t.home.glossaryAuto], ["poe1", "Path of Exile 1 / 流放之路 1"],
     ["poe2", "Path of Exile 2 / 流放之路 2"], ["last_epoch", "Last Epoch / 最后纪元"],
-    ["diablo4", "Diablo IV / 暗黑破坏神 IV"], ["none", t.home.glossaryNone],
+    ["diablo4", "Diablo IV / 暗黑破坏神 IV"],
+    ["diablo2", "Diablo II / 暗黑破坏神 II"],
+    ["diablo3", "Diablo III / 暗黑破坏神 III"],
+    ["diablo_immortal", "Diablo Immortal / 暗黑破坏神：不朽"],
+    ["grim_dawn", "Grim Dawn / 恐怖黎明"],
+    ["torchlight_infinite", "Torchlight: Infinite / 火炬之光：无限"],
+    ["hero_siege", "Hero Siege / 英雄攻城"],
+    ["slormancer", "The Slormancer"],
+    ["titan_quest2", "Titan Quest II / 泰坦之旅 II"],
+    ["torchlight2", "Torchlight II / 火炬之光 II"],
+    ["chronicon", "Chronicon / 像素黑暗史"],
+    ["none", t.home.glossaryNone],
   ]
   return (
     <div className="space-y-3">

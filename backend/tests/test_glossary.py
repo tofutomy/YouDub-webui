@@ -24,6 +24,26 @@ def test_game_selection_and_term_precedence():
         TaskConfig(translation_terms="缺少对照")
 
 
+@pytest.mark.parametrize("game,title,english,chinese", [
+    ('diablo2', 'Diablo II Resurrected', 'Blessed Hammer', '祝福之锤'),
+    ('diablo3', 'Diablo III Build', 'Hammer of the Ancients', '先祖之鎚'),
+    ('diablo_immortal', 'Diablo: Immortal', 'Disintegrate', '瓦解射线'),
+    ('grim_dawn', 'Grim Dawn Build', "Albrecht's Aether Ray", '阿尔布雷特的虚化射线'),
+    ('torchlight_infinite', 'Torchlight: Infinite', 'Aegis of Fire', '烈火神盾'),
+    ('hero_siege', 'Hero Siege Build', 'Fury of Tarethiel', '塔雷蒂尔之怒'),
+    ('slormancer', 'The Slormancer Build', 'Banners of War', '战争之旗'),
+    ('titan_quest2', 'Titan Quest II Build', 'Fissure', '裂隙'),
+    ('torchlight2', 'Torchlight II Build', 'Magma Spear', '岩浆长矛'),
+    ('chronicon', 'Chronicon Build', 'Reflective Shield', '反射之盾'),
+])
+def test_expanded_game_glossaries_use_verified_names(game, title, english, chinese):
+    assert TaskConfig(translation_glossary=game).translation_glossary == game
+    assert detect_glossary({"title": title}) == game
+    selected, hint = glossary_prompt("auto", {"title": title}, [english])
+    assert selected == game
+    assert f"{english} => {chinese}" in hint
+
+
 @pytest.mark.parametrize("mode", ["sentence", "batch"])
 def test_glossary_reaches_actual_translation_prompts(tmp_path, mode):
     metadata = tmp_path / "metadata"
@@ -35,7 +55,7 @@ def test_glossary_reaches_actual_translation_prompts(tmp_path, mode):
     ]}}), encoding="utf-8")
     source = get_source_for_task({"url": "https://www.youtube.com/watch?v=abcdefghijk",
                                   "asr_language": "en", "target_language": "zh"})
-    settings = {"base_url": "http://localhost", "api_key": "test", "model": "test",
+    settings = {"base_url": "https://opencode.ai/inference/go/openai/v1", "api_key": "test", "model": "test",
                 "translate_mode": mode, "translation_glossary": "auto",
                 "translation_terms": "Lightning Arrow => 魔改电箭", "validation_enabled": "true"}
     received = []
@@ -50,10 +70,12 @@ def test_glossary_reaches_actual_translation_prompts(tmp_path, mode):
             return {"score": 100, "issues": []}
         return {"translations": ["血法师使用魔改电箭。"]} if mode == "batch" else {"dst": "血法师使用魔改电箭。"}
 
-    with patch("backend.app.adapters.openai_translate._client"), patch(
+    with patch("backend.app.adapters.openai_translate._client") as make_client, patch(
         "backend.app.adapters.openai_translate._call_json", side_effect=answer
     ):
         output = translate_asr(asr, tmp_path, settings, source)
+    sessions = {call.kwargs["session_id"] for call in make_client.call_args_list}
+    assert len(sessions) == 1 and sessions.pop()
     assert len(received) == 3
     assert json.loads(output.read_text(encoding="utf-8"))["translation"][0]["dst"] == "血法师使用魔改电箭。"
 

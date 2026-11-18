@@ -1,5 +1,5 @@
 from backend.app.adapters import openai_translate
-from backend.app.adapters.openai_client import normalize_openai_base_url
+from backend.app.adapters.openai_client import normalize_openai_base_url, opencode_go_options
 
 
 def test_normalize_openai_base_url_strips_chat_completions_suffix():
@@ -11,6 +11,19 @@ def test_normalize_openai_base_url_strips_chat_completions_suffix():
 
 def test_normalize_openai_base_url_keeps_standard_v1_root():
     assert normalize_openai_base_url("https://api.openai.com/v1/") == "https://api.openai.com/v1"
+
+
+def test_opencode_go_headers_are_scoped_to_its_own_api():
+    for base_url in ("https://opencode.ai/inference/go/v1", "https://opencode.ai/inference/go/openai/v1",
+                     "https://opencode.ai/zen/go/v1"):
+        client = openai_translate._client(base_url, "test", session_id="task-session")
+        try:
+            assert client.default_headers["x-opencode-session"] == "task-session"
+            assert client.default_headers["User-Agent"] == "YouDub-webui/1.0"
+        finally:
+            client.close()
+    assert not opencode_go_options("https://opencode.ai/inference/v1", "task-session")
+    assert not opencode_go_options("https://opencode.ai.example/inference/go/v1", "task-session")
 
 
 def test_openai_client_initializes_with_socks_proxy_environment(monkeypatch):

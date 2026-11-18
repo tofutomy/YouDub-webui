@@ -7,6 +7,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Callable
+from uuid import NAMESPACE_URL, uuid5
 
 from openai import BadRequestError, OpenAI
 from pydantic import BaseModel, Field, ValidationError, model_validator
@@ -17,7 +18,7 @@ from ._translate_prompts import (
     PREPROCESS_PROMPT,
     get_translate_rules,
 )
-from .openai_client import normalize_openai_base_url
+from .openai_client import is_opencode_go, normalize_openai_base_url, opencode_go_options
 
 log = logging.getLogger(__name__)
 
@@ -100,10 +101,11 @@ def list_models(*, base_url: str, api_key: str) -> list[str]:
     return models
 
 
-def _client(base_url: str, api_key: str) -> OpenAI:
+def _client(base_url: str, api_key: str, session_id: str = "") -> OpenAI:
     if not api_key:
         raise ValueError("OpenAI API key is not configured.")
-    return OpenAI(api_key=api_key, base_url=normalize_openai_base_url(base_url))
+    base_url = normalize_openai_base_url(base_url)
+    return OpenAI(api_key=api_key, base_url=base_url, **opencode_go_options(base_url, session_id))
 
 
 _JSON_BLOCK_RE = re.compile(r"\{.*\}", re.DOTALL)
@@ -175,6 +177,7 @@ def preprocess(
     base_url: str,
     api_key: str,
     model: str,
+    session_id: str = "",
 ) -> PreprocessResponse:
     user = PREPROCESS_PROMPT.format(
         src_language_name=source.asr_language_name,
@@ -182,7 +185,7 @@ def preprocess(
         full_text=full_text,
         **_meta_view(meta),
     )
-    client = _client(base_url, api_key)
+    client = _client(base_url, api_key, session_id=session_id)
     last_error: Exception | None = None
     for attempt in range(PREPROCESS_RETRY + 1):
         try:
@@ -261,13 +264,14 @@ def translate_batch(
     base_url: str,
     api_key: str,
     model: str,
+    session_id: str = "",
     concurrency: int = DEFAULT_CONCURRENCY,
     on_progress: Callable[[int, str], None] | None = None,
 ) -> list[str]:
     if not texts:
         return []
     system = _translate_system(source, meta, pre)
-    client = _client(base_url, api_key)
+    client = _client(base_url, api_key, session_id=session_id)
     log.info(
         "translate_batch: %d sentences, concurrency=%d", len(texts), concurrency,
     )
@@ -353,6 +357,7 @@ def translate_batch_context(
     base_url: str,
     api_key: str,
     model: str,
+    session_id: str = "",
     concurrency: int = DEFAULT_CONCURRENCY,
     batch_size: int = DEFAULT_BATCH_SIZE,
     on_progress: Callable[[int, str], None] | None = None,
@@ -373,7 +378,7 @@ def translate_batch_context(
         corrections=_format_terms(pre.corrections, "{wrong} -> {correct}", "(none)"),
         **_meta_view(meta),
     ) + ("" if "_glossary_context" in meta else meta.get("_glossary", ""))
-    client = _client(base_url, api_key)
+    client = _client(base_url, api_key, session_id=session_id)
 
     # 非对称边缘丢弃策略：每批发送 batch_size 句给 LLM，但仅保留中间部分。
     # 前置上下文比后置更重要 → 前丢 3 句、后丢 1 句。
@@ -584,6 +589,7 @@ def validate_and_correct(
     base_url: str,
     api_key: str,
     model: str,
+    session_id: str = "",
     threshold: int = DEFAULT_VALIDATION_THRESHOLD,
     max_corrections: int = DEFAULT_MAX_CORRECTIONS,
     checkpoint_file: Path | None = None,
@@ -598,7 +604,7 @@ def validate_and_correct(
     if not texts:
         return dst_list, {"overall_score": 100, "batches": [], "corrected_count": 0}
 
-    client = _client(base_url, api_key)
+    client = _client(base_url, api_key, session_id=session_id)
 
     # Validation uses a larger, non-overlapping batch to provide a different
     # contextual view than translation (which uses batch_size=15 with overlap).
@@ -857,6 +863,9 @@ def translate_asr(
         log.info("已加载游戏术语表：%s", glossary.selected)
 
     api = {key: settings[key] for key in API_SETTING_KEYS if key in settings}
+    if is_opencode_go(normalize_openai_base_url(api.get("base_url", ""))):
+        # 一次任务的预处理、翻译和校验共用会话。只传 UUID，避免暴露本地路径。
+        api["session_id"] = str(uuid5(NAMESPACE_URL, f"youdub:{session.resolve()}:{source.target_language}"))
     pre_file = session / "metadata" / "preprocess.json"
 
     # Load cached preprocess output if available

@@ -10,13 +10,26 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Mapping, Iterable
 
-GlossaryId = Literal["auto", "none", "poe1", "poe2", "last_epoch", "diablo4"]
+GlossaryId = Literal[
+    "auto", "none", "poe1", "poe2", "last_epoch", "diablo4",
+    "diablo2", "diablo3", "diablo_immortal", "grim_dawn", "torchlight_infinite", "hero_siege", "slormancer", "titan_quest2", "torchlight2", "chronicon",
+]
 GLOSSARY_DIR = Path(__file__).with_name("glossaries")
 GAMES = {
     "poe2": r"\b(?:poe\s*2|path of exile\s*2)\b|(?:流放之路|流亡黯道)\s*(?:2|[:：]\s*降临)",
     "poe1": r"\b(?:poe\s*1|path of exile(?:\s*1)?|poe)\b|流放之路|流亡黯道",
     "last_epoch": r"\blast epoch\b|最后纪元|最後紀元",
     "diablo4": r"\b(?:diablo\s*(?:iv|4)|d4)\b|暗黑破[坏壞]神\s*(?:4|iv)",
+    "diablo2": r"\b(?:diablo\s*(?:ii|2)|d2r|project diablo 2|pd2)\b|暗黑(?:破[坏壞]神)?\s*(?:2(?!\d)|ii\b)",
+    "diablo3": r"\b(?:diablo\s*(?:iii|3)|d3)\b|暗黑(?:破[坏壞]神)?\s*(?:3(?!\d)|iii\b)",
+    "diablo_immortal": r"\bdiablo[\s:]+immortal\b|暗黑(?:破[坏壞]神)?[\s:：]*(?:永生)?不朽",
+    "grim_dawn": r"\bgrim dawn\b|恐怖黎明",
+    "torchlight_infinite": r"\btorchlight[\s:]+infinite\b|火炬之光[\s:：]*[无無]限",
+    "hero_siege": r"\bhero siege\b|英雄攻城",
+    "slormancer": r"\b(?:the )?slormancer\b|(?:史莱姆|史萊姆)(?:术士|術士|法师|法師)",
+    "titan_quest2": r"\btitan quest\s*(?:ii|2)\b|泰坦之旅\s*(?:2(?!\d)|ii\b)",
+    "torchlight2": r"\btorchlight\s*(?:ii|2)\b|火炬之光\s*(?:2(?!\d)|ii\b)",
+    "chronicon": r"\bchronicon\b|像素黑暗史",
 }
 _OPTIONS = frozenset(GAMES)
 _MAX_TERMS = 180

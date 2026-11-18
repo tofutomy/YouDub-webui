@@ -208,3 +208,41 @@ def test_probe_video_size_uses_configured_ffprobe(monkeypatch):
 
     assert ffmpeg.probe_video_size(Path("video.mp4")) == (1920, 1080)
     assert commands[0][0] == "/opt/bin/ffprobe"
+
+
+
+def test_tail_freeze_keeps_dubbing_and_subtitles_through_video_end(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from backend.app.adapters import audio
+
+    media = tmp_path / "media"
+    media.mkdir()
+    source = media / "video_source.mp4"
+    subprocess.run([ffmpeg.ffmpeg_binary(), "-v", "error", "-f", "lavfi", "-i",
+                    "testsrc2=size=64x64:rate=10:duration=1", "-c:v", "libx264", str(source)], check=True)
+    tts = tmp_path / "tts"
+    tts.mkdir()
+    rate = 8000
+    sf.write(tts / "0001.wav", np.full(int(2.2 * rate), 0.25, dtype=np.float32), rate)
+    bgm = media / "audio_bgm.wav"
+    sf.write(bgm, np.zeros(rate, dtype=np.float32), rate)
+    draft = tmp_path / "translation.zh.json"
+    draft.write_text(json.dumps({"translation": [
+        {"start_time": 900, "end_time": 1000, "dst": "最后一句", "dst_lang": "zh"},
+    ]}), encoding="utf-8")
+    dubbing, timings = audio.merge_tts_audio(draft, tts, tmp_path, video_file=source)
+    timing = json.loads(timings.read_text(encoding="utf-8"))
+    assert 0 < timing["tail_freeze_ms"] <= ffmpeg.MAX_TAIL_FREEZE_MS
+    assert sf.info(dubbing).duration > 1
+    final = ffmpeg.merge_video(source, dubbing, bgm, timings, tmp_path)
+    assert ffmpeg.probe_video_duration(final) >= sf.info(dubbing).duration
+    # 画面时长按帧离散，音轨仍需覆盖尾句最后一个采样。
+    audio_duration = subprocess.check_output(
+        [ffmpeg.ffprobe_binary(), "-v", "error", "-select_streams", "a:0", "-show_entries",
+         "stream=duration", "-of", "csv=p=0", str(final)], text=True,
+    )
+    assert float(audio_duration) >= sf.info(dubbing).duration
+    assert abs(ffmpeg.probe_video_duration(final) - (1 + timing["tail_freeze_ms"] / 1000)) <= 0.1
+    subtitle = (tmp_path / "metadata" / "subtitles.zh.srt").read_text(encoding="utf-8")
+    assert ffmpeg._srt_time(timing["translation"][0]["actual_end_time"]) in subtitle

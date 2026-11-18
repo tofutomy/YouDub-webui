@@ -12,16 +12,18 @@ import soundfile as sf
 from pydub import AudioSegment
 
 from ..config import ffmpeg_binary
-from .ffmpeg import probe_video_duration
+from .ffmpeg import MAX_TAIL_FREEZE_MS, probe_video_duration
 
 MAX_LAG_MS = 1000
+RECOVERY_LEAD_MS = 300
+RECOVERY_TEMPO = 2.2
 PREFERRED_TEMPO = 1.55
 PLANNING_TEMPO = 2.8
 MAX_TEMPO = 3.0
 TAIL_GUARD_MS = 100
 TEMPO_PAD_MS = 45
 TEMPO_MARGIN_MS = 20
-ALIGNMENT_VERSION = 1
+ALIGNMENT_VERSION = 3
 
 
 def split_audio_by_translation(vocals_file: Path, translation_file: Path, session: Path) -> Path:
@@ -54,9 +56,13 @@ def _speech_span(file: Path) -> tuple[int, int, int]:
     return start, end - start, sample_rate
 
 
-def _sync_error(index: int, segment: dict) -> RuntimeError:
+class _AlignmentError(RuntimeError):
+    pass
+
+
+def _sync_error(index: int, segment: dict) -> _AlignmentError:
     start = segment["start_time"] / 1000
-    return RuntimeError(
+    return _AlignmentError(
         f"第 {index + 1} 句（原片 {int(start // 60):02d}:{start % 60:06.3f}）"
         "配音在允许的延迟和语速内放不下。请缩短该处译文或重新生成该处配音。"
     )
@@ -68,21 +74,45 @@ def _clip_budget(frames: int, sample_rate: int, tempo: float) -> int:
     return min(frames, math.ceil((frames + pad) / tempo) + margin)
 
 
-def _latest_ends(translation: list[dict], lengths: list[int], sample_rate: int, video_end: int) -> list[int]:
+def _alignment_windows(
+    translation: list[dict], lengths: list[int], sample_rate: int, video_end: int,
+    lead_ms: int, tempo: float, *, tail_freeze_ms: int = 0,
+) -> list[tuple[int, int, int]]:
     lag = round(MAX_LAG_MS * sample_rate / 1000)
-    latest_ends = [0] * len(translation)
-    next_latest_start = video_end
-    # 从片尾往前给每句预留最短可播的时间，防止前面的长句吃掉后续的时间。
+    lead = round(lead_ms * sample_rate / 1000)
+    windows = [(0, 0, 0)] * len(translation)
+    next_start = video_end + round(tail_freeze_ms * sample_rate / 1000)
+    # 从片尾倒推，为后续句子留出完整语音的空间。允许的提前量只在排不开时使用。
     for index in reversed(range(len(translation))):
         item = translation[index]
         start = max(0, math.floor(item["start_time"] * sample_rate / 1000))
         source_end = math.floor(item["end_time"] * sample_rate / 1000)
-        end = min(next_latest_start, source_end + lag)
-        latest_ends[index] = end
-        next_latest_start = min(start + lag, end - _clip_budget(lengths[index], sample_rate, PLANNING_TEMPO))
-        if next_latest_start < start:
+        # 定格只给尾句增加空间，其余句仍要在各自的同步窗口里结束。
+        end = next_start if tail_freeze_ms and index == len(translation) - 1 else min(next_start, source_end + lag)
+        latest_start = min(start + lag, end - _clip_budget(lengths[index], sample_rate, tempo))
+        if latest_start < max(0, start - lead):
             raise _sync_error(index, item)
-    return latest_ends
+        windows[index] = start, latest_start, end
+        next_start = latest_start
+    return windows
+
+
+def _plan_alignment(
+    translation: list[dict], lengths: list[int], sample_rate: int, video_end: int,
+) -> list[tuple[int, int, int]]:
+    attempts = (
+        (0, PLANNING_TEMPO, 0),
+        (RECOVERY_LEAD_MS, RECOVERY_TEMPO, 0),
+        (RECOVERY_LEAD_MS, PLANNING_TEMPO, 0),
+        (RECOVERY_LEAD_MS, RECOVERY_TEMPO, MAX_TAIL_FREEZE_MS),
+    )
+    for lead, tempo, freeze in attempts:
+        try:
+            return _alignment_windows(translation, lengths, sample_rate, video_end, lead, tempo, tail_freeze_ms=freeze)
+        except _AlignmentError:
+            continue
+    return _alignment_windows(translation, lengths, sample_rate, video_end, RECOVERY_LEAD_MS, PLANNING_TEMPO,
+                              tail_freeze_ms=MAX_TAIL_FREEZE_MS)
 
 
 def _fit_clip(clip: np.ndarray, source_rate: int, sample_rate: int, frames: int) -> np.ndarray | None:
@@ -142,25 +172,32 @@ def merge_tts_audio(
     duration = probe_video_duration(source_video)
     video_frames = math.floor(duration * sample_rate)
     guard = min(round(TAIL_GUARD_MS * sample_rate / 1000), video_frames // 10)
-    latest_ends = _latest_ends(translation, lengths, sample_rate, video_frames - guard)
+    windows = _plan_alignment(translation, lengths, sample_rate, video_frames - guard)
 
     with TemporaryDirectory(prefix="dubbing-", dir=dubbing_file.parent) as staging:
         scratch_dub = Path(staging) / dubbing_file.name
         scratch_timing = Path(staging) / timings_file.name
         with sf.SoundFile(scratch_dub, "w", sample_rate, 1) as output:
             cursor = 0
-            for index, (item, file, span, raw_frames, latest_end) in enumerate(
-                zip(translation, tts_files, spans, lengths, latest_ends, strict=True)
+            for index, (item, file, span, raw_frames, window) in enumerate(
+                zip(translation, tts_files, spans, lengths, windows, strict=True)
             ):
-                start = max(cursor, int(item["start_time"] * sample_rate // 1000))
-                source_span = max(0, int((item["end_time"] - item["start_time"]) * sample_rate // 1000))
+                source_start, latest_start, latest_end = window
+                start = max(cursor, min(source_start, latest_start))
+                source_end = math.floor(item["end_time"] * sample_rate / 1000)
+                # 前一句占用的时间优先用正常语速范围内的余量补回来。
+                source_span = max(0, source_end - max(source_start, start))
                 preferred = min(raw_frames, max(source_span, _clip_budget(raw_frames, sample_rate, PREFERRED_TEMPO)))
                 budget = min(preferred, latest_end - start)
                 if budget < 1:
                     raise _sync_error(index, item)
                 offset, size, source_rate = span
                 clip, _ = sf.read(file, start=offset, frames=size, dtype="float32", always_2d=True)
-                audio = _fit_clip(clip.mean(axis=1), source_rate, sample_rate, budget)
+                mono = clip.mean(axis=1)
+                audio = _fit_clip(mono, source_rate, sample_rate, budget)
+                if audio is None and budget < latest_end - start:
+                    # 变速滤镜的实际长度会波动。优先使用窗口余量，保留后续句的预留。
+                    audio = _fit_clip(mono, source_rate, sample_rate, latest_end - start)
                 if audio is None:
                     raise _sync_error(index, item)
                 gap = start - cursor
@@ -176,8 +213,12 @@ def merge_tts_audio(
                     progress_callback(round(100 * (index + 1) / len(translation)),
                                       f"已对齐 {index + 1}/{len(translation)} 句配音")
 
+        extension = max(0, math.ceil((cursor + guard - video_frames) * 1000 / sample_rate))
+        # 需要定格时至少补一秒，为视频帧取整和尾句收音留余量。
+        tail_freeze_ms = max(1000, extension) if extension else 0
         scratch_timing.write_text(
-            json.dumps({"alignment_version": ALIGNMENT_VERSION, "translation": translation}, ensure_ascii=False, indent=2),
+            json.dumps({"alignment_version": ALIGNMENT_VERSION, "translation": translation,
+                        "tail_freeze_ms": tail_freeze_ms}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         # 时间轴作为最后提交的产物，重跑时不会复用只写了一半的音轨。

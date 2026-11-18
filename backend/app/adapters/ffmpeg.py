@@ -274,6 +274,9 @@ def _find_or_generate_srt(session: Path, timings_file: Path) -> Path | None:
     return next((session / "metadata").glob("subtitles.*.srt"), None)
 
 
+MAX_TAIL_FREEZE_MS = 3000
+
+
 def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_file: Path, session: Path, *, add_subtitles: bool = True) -> Path:
     tmp_dir = session / "tmp"
     media_dir = session / "media"
@@ -293,11 +296,18 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
     mixed_audio = tmp_dir / "audio_mixed.m4a"
     mixed_audio_output = mixed_audio.resolve()
     final_video_output = final_video.resolve()
+    timeline = json.loads(timings_file.read_text(encoding="utf-8")) if timings_file.is_file() else {}
+    tail_freeze_ms = timeline.get("tail_freeze_ms", 0)
+    if type(tail_freeze_ms) is not int or not 0 <= tail_freeze_ms <= MAX_TAIL_FREEZE_MS:
+        raise RuntimeError("片尾定格时长无效，请从「合并音频」级联重跑。")
+    total_duration = 0.0
+    if tail_freeze_ms or dubbing_input.is_file():
+        total_duration = probe_video_duration(video_input) + tail_freeze_ms / 1000
     if dubbing_input.is_file():
         import soundfile as sf
 
-        if sf.info(dubbing_input).duration > probe_video_duration(video_input):
-            raise RuntimeError("配音轨超过原视频长度。请从「合并音频」级联重跑，避免成片截去片尾配音。")
+        if sf.info(dubbing_input).duration > total_duration:
+            raise RuntimeError("配音轨超过成片画面时长。请从「合并音频」级联重跑，避免截去片尾配音。")
     subprocess.run(
         [
             ffmpeg_binary(),
@@ -327,10 +337,18 @@ def merge_video(video_file: Path, dubbing_file: Path, bgm_file: Path, timings_fi
         str(mixed_audio_output),
     ]
 
+    video_filters = []
+    if tail_freeze_ms:
+        # 先延长画面再生成字幕，使新增帧仍按真实配音时间显示字幕。
+        video_filters.append("tpad=stop_mode=clone:stop=-1")
+        # 成片按时间截止，避免定格滤镜按帧四舍五入导致少补一帧。
+        cmd.extend(["-t", f"{total_duration:.6f}"])
     if add_subtitles:
         subtitles = _find_or_generate_srt(session, timings_file)
         if subtitles:
-            cmd.extend(["-vf", subtitle_filter(video_input, subtitles, session_dir)])
+            video_filters.append(subtitle_filter(video_input, subtitles, session_dir))
+    if video_filters:
+        cmd.extend(["-vf", ",".join(video_filters)])
 
     cmd.extend([
         "-map",

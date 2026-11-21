@@ -236,7 +236,24 @@ cp env.txt.example .env
 
 ### 5. 启动服务
 
-#### Windows PowerShell
+#### Windows 快速启停（前后端独立）
+
+仓库根目录提供了前后端独立的双击启停入口，日志分别保存在 `data/logs/webui-backend.log` 与 `data/logs/webui-frontend.log`：
+
+- 后端：双击 `Start-YouDub-Backend.cmd` 启动（默认 `:8000`），双击 `Stop-YouDub-Backend.cmd` 关闭。
+- 前端：双击 `Start-YouDub-Frontend.cmd` 启动（默认 `:3080`，就绪后自动打开浏览器），双击 `Stop-YouDub-Frontend.cmd` 关闭。
+
+也可以通过命令行分别或统一控制：
+
+```powershell
+.\.venv\Scripts\python.exe scripts\webui_ctl.py start --target backend
+.\.venv\Scripts\python.exe scripts\webui_ctl.py start --target frontend --open
+.\.venv\Scripts\python.exe scripts\webui_ctl.py status
+.\.venv\Scripts\python.exe scripts\webui_ctl.py stop --target frontend
+.\.venv\Scripts\python.exe scripts\webui_ctl.py stop --target backend
+```
+
+#### Windows PowerShell（手动分别启动）
 
 后端：
 

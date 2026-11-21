@@ -6,6 +6,9 @@
 
 | 用途 | 命令 |
 |------|------|
+| 快速启停后端 | 双击 `Start-YouDub-Backend.cmd` / `Stop-YouDub-Backend.cmd` |
+| 快速启停前端 | 双击 `Start-YouDub-Frontend.cmd` / `Stop-YouDub-Frontend.cmd` |
+| 查看前后端状态 | `.\.venv\Scripts\python.exe scripts\webui_ctl.py status` |
 | 启动后端 | `.\.venv\Scripts\uvicorn.exe backend.app.main:app --reload --host 0.0.0.0 --port 8000` |
 | 启动前端 | `npm.cmd --prefix apps/web run dev -- --hostname 0.0.0.0 --port 3080` |
 | 运行后端测试 | `.\.venv\Scripts\python.exe -m pytest backend\tests` |

@@ -171,6 +171,8 @@ def write_srt(translation_file: Path, session: Path) -> Path:
     lines: list[str] = []
     idx = 1
     for item in translation:
+        if item.get("dubbing_skipped"):
+            continue
         start, end = _segment_times(item)
         if end <= start:
             continue

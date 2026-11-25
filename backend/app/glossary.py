@@ -31,9 +31,67 @@ GAMES = {
     "torchlight2": r"\btorchlight\s*(?:ii|2)\b|火炬之光\s*(?:2(?!\d)|ii\b)",
     "chronicon": r"\bchronicon\b|像素黑暗史",
 }
+# 各游戏内置词表在前端下拉框中的显示顺序与名称
+GLOSSARY_ORDER: tuple[str, ...] = (
+    "poe1",
+    "poe2",
+    "last_epoch",
+    "diablo4",
+    "diablo2",
+    "diablo3",
+    "diablo_immortal",
+    "grim_dawn",
+    "torchlight_infinite",
+    "hero_siege",
+    "slormancer",
+    "titan_quest2",
+    "torchlight2",
+    "chronicon",
+)
+GLOSSARY_LABELS: dict[str, str] = {
+    "poe1": "Path of Exile 1 / 流放之路 1",
+    "poe2": "Path of Exile 2 / 流放之路 2",
+    "last_epoch": "Last Epoch / 最后纪元",
+    "diablo4": "Diablo IV / 暗黑破坏神 IV",
+    "diablo2": "Diablo II / 暗黑破坏神 II",
+    "diablo3": "Diablo III / 暗黑破坏神 III",
+    "diablo_immortal": "Diablo Immortal / 暗黑破坏神：不朽",
+    "grim_dawn": "Grim Dawn / 恐怖黎明",
+    "torchlight_infinite": "Torchlight: Infinite / 火炬之光：无限",
+    "hero_siege": "Hero Siege / 英雄攻城",
+    "slormancer": "The Slormancer",
+    "titan_quest2": "Titan Quest II / 泰坦之旅 II",
+    "torchlight2": "Torchlight II / 火炬之光 II",
+    "chronicon": "Chronicon / 像素黑暗史",
+}
 _OPTIONS = frozenset(GAMES)
 _MAX_TERMS = 180
 _MAX_TERM_LENGTH = 100
+
+
+def list_glossary_options() -> list[dict[str, object]]:
+    """返回内置术语表下拉选项列表（含自动识别与关闭选项），供配置 Schema 接口使用。"""
+    options: list[dict[str, object]] = [
+        {
+            "value": "auto",
+            "label": {"zh": "按原片自动识别游戏", "en": "Detect game automatically"},
+        }
+    ]
+    seen: set[str] = set()
+    # 先按约定展示顺序输出，再补充未来新增但未列入顺序表的游戏词库
+    for game_id in (*GLOSSARY_ORDER, *GAMES.keys()):
+        if game_id in seen or game_id not in GAMES:
+            continue
+        seen.add(game_id)
+        label = GLOSSARY_LABELS.get(game_id, game_id)
+        options.append({"value": game_id, "label": {"zh": label, "en": label}})
+    options.append(
+        {
+            "value": "none",
+            "label": {"zh": "关闭内置词表", "en": "Turn off the built-in glossary"},
+        }
+    )
+    return options
 
 
 def _normalize(value: str) -> str:

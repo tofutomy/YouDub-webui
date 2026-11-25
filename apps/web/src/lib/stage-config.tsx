@@ -1,7 +1,7 @@
 "use client"
 
 import type { ReactNode } from "react"
-import type { StageConfig, Task, TranslateProvider } from "@/lib/api"
+import type { StageConfig, Task, TaskConfigSchema, TranslateProvider } from "@/lib/api"
 import {
   AsrModelSelect,
   DirectionSelect,
@@ -41,10 +41,10 @@ export const DEFAULT_STAGE_CONFIG: StageConfig = {
   demucs_shifts: 1,
 }
 
-export function configFromTask(task: Task): StageConfig {
+export function configFromTask(task: Task, schema?: TaskConfigSchema | null): StageConfig {
   const al = task.asr_language || DEFAULT_ASR_LANGUAGE
   const tl = task.target_language || DEFAULT_TARGET_LANGUAGE
-  return {
+  const base: StageConfig = {
     asr_model: task.asr_model || "",
     asr_language: al,
     target_language: tl,
@@ -60,17 +60,47 @@ export function configFromTask(task: Task): StageConfig {
     demucs_model: task.demucs_model || "",
     demucs_shifts: task.demucs_shifts ?? 1,
   }
-}
-
-export function configForStage(stage: string, config: StageConfig): Partial<StageConfig> {
-  const defs = STAGE_FIELDS[stage] || []
-  const patch: Partial<StageConfig> = {}
-  for (const def of defs) {
-    for (const key of def.keys) {
-      ;(patch as Record<string, unknown>)[key] = config[key]
+  // 兼容后端 Schema 新增的未来扩展字段
+  if (schema?.defaults) {
+    const taskRecord = task as unknown as Record<string, unknown>
+    const targetRecord = base as unknown as Record<string, unknown>
+    for (const [key, fallback] of Object.entries(schema.defaults)) {
+      if (key in targetRecord) continue
+      const raw = taskRecord[key]
+      if (typeof fallback === "boolean") {
+        targetRecord[key] = raw === undefined || raw === null ? fallback : Boolean(raw)
+      } else {
+        targetRecord[key] = raw ?? fallback
+      }
     }
   }
-  return patch
+  return base
+}
+
+export function configForStage(
+  stage: string,
+  config: StageConfig,
+  schema?: TaskConfigSchema | null,
+): Partial<StageConfig> {
+  const stageSchema = schema?.stages.find((item) => item.stage === stage)
+  const keys = stageSchema
+    ? stageSchema.fields.flatMap((field) => field.keys)
+    : (STAGE_FIELDS[stage] || []).flatMap((def) => def.keys)
+  const patch: Record<string, unknown> = {}
+  const record = config as unknown as Record<string, unknown>
+  for (const key of keys) {
+    if (key in record) {
+      patch[key] = record[key]
+    }
+  }
+  return patch as Partial<StageConfig>
+}
+
+export function configurableStages(schema?: TaskConfigSchema | null): string[] {
+  if (schema?.stages?.length) {
+    return schema.stages.filter((item) => item.fields.length > 0).map((item) => item.stage)
+  }
+  return CONFIGURABLE_STAGES
 }
 
 export interface FieldRenderProps {

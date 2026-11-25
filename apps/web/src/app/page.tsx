@@ -17,6 +17,11 @@ import { useI18n } from "@/lib/i18n"
 import { statusBadgeClass } from "@/lib/status"
 import { AppHeader } from "@/components/app-header"
 import {
+  TaskConfigSchemaField,
+  localizedText,
+} from "@/components/task-config-schema-field"
+import { useTaskConfigSchema } from "@/hooks/use-task-config-schema"
+import {
   DEFAULT_STAGE_CONFIG,
   STAGE_FIELDS,
 } from "@/lib/stage-config"
@@ -72,13 +77,19 @@ function activeCount(tasks: TaskSummary[]) {
   return tasks.filter((t) => isActive(t.status)).length
 }
 
-function defaultConfigFromStorage(value: string | null): StageConfig | null {
+function defaultConfigFromStorage(
+  value: string | null,
+  schemaDefaults?: Record<string, unknown>,
+): StageConfig | null {
   if (!value) return null
   try {
     const parsed: unknown = JSON.parse(value)
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
     const record = parsed as Record<string, unknown>
-    const next: StageConfig = { ...DEFAULT_STAGE_CONFIG }
+    const next: StageConfig = {
+      ...(schemaDefaults || {}),
+      ...DEFAULT_STAGE_CONFIG,
+    } as StageConfig
     const nextRecord = next as unknown as Record<string, unknown>
     for (const key of STRING_CONFIG_KEYS) {
       const field = record[key]
@@ -92,6 +103,20 @@ function defaultConfigFromStorage(value: string | null): StageConfig | null {
     next.demucs_shifts = typeof demucsShifts === "number" && Number.isFinite(demucsShifts)
       ? demucsShifts
       : 1
+    // 兼容后端 Schema 新增的扩展字段：按默认值的类型校验并恢复
+    if (schemaDefaults) {
+      for (const [key, fallback] of Object.entries(schemaDefaults)) {
+        if (key in DEFAULT_STAGE_CONFIG) continue
+        const field = record[key]
+        if (typeof fallback === "string" && typeof field === "string") {
+          nextRecord[key] = field
+        } else if (typeof fallback === "boolean" && typeof field === "boolean") {
+          nextRecord[key] = field
+        } else if (typeof fallback === "number" && typeof field === "number" && Number.isFinite(field)) {
+          nextRecord[key] = field
+        }
+      }
+    }
     return next
   } catch {
     return null
@@ -111,8 +136,10 @@ function getPageNumbers(current: number, totalPages: number): (number | "...")[]
 }
 
 export default function Home() {
-  const { activeTasksText, stageLabel, statusLabel, t, paginationTotalText, paginationPageInfoText } = useI18n()
+  const { activeTasksText, language, stageLabel, statusLabel, t, paginationTotalText, paginationPageInfoText } = useI18n()
+  const { schema } = useTaskConfigSchema()
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [userEdited, setUserEdited] = useState(false)
   const [youtubeUrl, setYoutubeUrl] = useState("")
   const [bilibiliUrl, setBilibiliUrl] = useState("")
   const [localFile, setLocalFile] = useState<File | null>(null)
@@ -121,20 +148,26 @@ export default function Home() {
   const [config, setConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
 
-  // 首次渲染完成后在客户端恢复本机保存的配置
+  // 首次渲染完成后在客户端恢复本机保存的配置（仅在用户尚未手动修改表单时合并）
   useEffect(() => {
+    if (userEdited) return
     const restore = window.setTimeout(() => {
       try {
         const saved = defaultConfigFromStorage(
           window.localStorage.getItem(DEFAULT_TASK_CONFIG_STORAGE_KEY),
+          schema?.defaults,
         )
-        if (saved) setConfig(saved)
+        if (saved) {
+          setConfig(saved)
+        } else if (schema?.defaults) {
+          setConfig((prev) => ({ ...schema.defaults, ...prev } as StageConfig))
+        }
       } catch {
         // localStorage 不可用时忽略
       }
     }, 0)
     return () => window.clearTimeout(restore)
-  }, [])
+  }, [schema, userEdited])
   const [tasks, setTasks] = useState<TaskSummary[]>([])
   const [error, setError] = useState("")
   const [submitting, setSubmitting] = useState(false)
@@ -144,6 +177,7 @@ export default function Home() {
   const [total, setTotal] = useState(0)
 
   function updateConfig(patch: Partial<StageConfig>) {
+    setUserEdited(true)
     setDefaultConfigSaved(false)
     setConfig((prev) => ({ ...prev, ...patch }))
   }
@@ -289,27 +323,53 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Stage config sections (from registry) */}
-              {CREATE_SECTION_STAGES.map((stage) => {
-                const fields = STAGE_FIELDS[stage]
-                if (!fields || fields.length === 0) return null
-                return (
-                  <div key={stage} className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Separator className="flex-1" />
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {sectionLabelKey[stage]}
-                      </span>
-                      <Separator className="flex-1" />
-                    </div>
-                    {fields.map((field, i) => (
-                      <div key={i}>
-                        {field.render({ config, onChange: updateConfig, providerOptions })}
+              {/* 阶段配置分区：优先由后端 Schema 动态渲染，加载前或离线时回退本地注册表 */}
+              {schema?.stages?.length ? (
+                schema.stages.map((section) => {
+                  if (!section.fields.length) return null
+                  return (
+                    <div key={section.stage} className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Separator className="flex-1" />
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {localizedText(section.label, language)}
+                        </span>
+                        <Separator className="flex-1" />
                       </div>
-                    ))}
-                  </div>
-                )
-              })}
+                      {section.fields.map((field) => (
+                        <div key={field.id}>
+                          <TaskConfigSchemaField
+                            field={field}
+                            config={config}
+                            onChange={updateConfig}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })
+              ) : (
+                CREATE_SECTION_STAGES.map((stage) => {
+                  const fields = STAGE_FIELDS[stage]
+                  if (!fields || fields.length === 0) return null
+                  return (
+                    <div key={stage} className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <Separator className="flex-1" />
+                        <span className="text-xs font-medium text-muted-foreground">
+                          {sectionLabelKey[stage]}
+                        </span>
+                        <Separator className="flex-1" />
+                      </div>
+                      {fields.map((field, i) => (
+                        <div key={i}>
+                          {field.render({ config, onChange: updateConfig, providerOptions })}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })
+              )}
 
               <div className="flex items-center justify-between gap-3">
                 <div className="min-h-5 text-xs text-muted-foreground">

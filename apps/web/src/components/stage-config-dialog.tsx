@@ -2,9 +2,10 @@
 
 import { Loader2 } from "lucide-react"
 
-import type { StageConfig, TranslateProvider } from "@/lib/api"
+import type { StageConfig, TaskConfigSchema, TranslateProvider } from "@/lib/api"
 import { useI18n } from "@/lib/i18n"
 import { STAGE_FIELDS } from "@/lib/stage-config"
+import { TaskConfigSchemaField } from "@/components/task-config-schema-field"
 import {
   Dialog,
   DialogClose,
@@ -20,6 +21,7 @@ interface StageConfigDialogProps {
   config: StageConfig
   onConfigChange: (patch: Partial<StageConfig>) => void
   providerOptions: TranslateProvider[]
+  schema?: TaskConfigSchema | null
   saving: boolean
   success: boolean
   error: string
@@ -32,6 +34,7 @@ export function StageConfigDialog({
   config,
   onConfigChange,
   providerOptions,
+  schema,
   saving,
   success,
   error,
@@ -39,6 +42,9 @@ export function StageConfigDialog({
   onSave,
 }: StageConfigDialogProps) {
   const { t } = useI18n()
+  const schemaFields = stageName
+    ? schema?.stages.find((item) => item.stage === stageName)?.fields
+    : undefined
   const fields = stageName ? STAGE_FIELDS[stageName] : null
   return (
     <Dialog
@@ -49,7 +55,19 @@ export function StageConfigDialog({
         <DialogHeader>
           <DialogTitle>{t.task.stageConfigTitle}</DialogTitle>
         </DialogHeader>
-        {stageName && fields ? (
+        {stageName && schemaFields && schemaFields.length > 0 ? (
+          <div className="space-y-4">
+            {schemaFields.map((field) => (
+              <div key={field.id}>
+                <TaskConfigSchemaField
+                  field={field}
+                  config={config}
+                  onChange={onConfigChange}
+                />
+              </div>
+            ))}
+          </div>
+        ) : stageName && fields ? (
           <div className="space-y-4">
             {fields.map((field, i) => (
               <div key={i}>

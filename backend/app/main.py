@@ -22,6 +22,7 @@ from .pipeline import run_task
 from .routers._common import cors_origin_regex, cors_origins
 from .routers.cookies import router as cookies_router
 from .routers.settings import router as settings_router
+from .routers.task_config import router as task_config_router
 from .routers.tasks import router as tasks_router
 from .routers.translate_providers import router as providers_router
 
@@ -104,6 +105,7 @@ app.add_middleware(
 
 # Mount API routers — each router owns a prefix and its own tag.
 app.include_router(tasks_router)
+app.include_router(task_config_router)
 app.include_router(cookies_router)
 app.include_router(settings_router)
 app.include_router(providers_router)

@@ -42,11 +42,12 @@ import { ConfirmDialog } from "@/components/confirm-dialog"
 import { StageConfigDialog } from "@/components/stage-config-dialog"
 import { StageInfoDialog } from "@/components/stage-info-dialog"
 import {
-  CONFIGURABLE_STAGES,
   DEFAULT_STAGE_CONFIG,
   configForStage,
   configFromTask,
+  configurableStages,
 } from "@/lib/stage-config"
+import { useTaskConfigSchema } from "@/hooks/use-task-config-schema"
 import { useTaskPolling } from "@/hooks/use-task-polling"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -127,6 +128,8 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
   // Config form state
   const [cfgConfig, setCfgConfig] = useState<StageConfig>(DEFAULT_STAGE_CONFIG)
   const [providerOptions, setProviderOptions] = useState<TranslateProvider[]>([])
+  const { schema, reload: reloadSchema } = useTaskConfigSchema()
+  const configurableStageList = useMemo(() => configurableStages(schema), [schema])
 
   const handleDelete = async () => {
     setDeleting(true)
@@ -227,8 +230,9 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     setConfigError("")
     setConfigSuccess(false)
     if (task) {
-      setCfgConfig(configFromTask(task))
+      setCfgConfig(configFromTask(task, schema))
     }
+    reloadSchema()
     if (stageName === "translate") {
       getTranslateProviders()
         .then((resp) => setProviderOptions(resp.providers))
@@ -242,7 +246,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
     setConfigError("")
     setConfigSuccess(false)
     try {
-      const patch = configForStage(configStageTarget, cfgConfig)
+      const patch = configForStage(configStageTarget, cfgConfig, schema)
       const next = await updateTaskConfig(id, patch)
       setTask(next)
       setConfigSuccess(true)
@@ -421,7 +425,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
                               <Info className="size-3.5" />
                             </button>
                           ) : null}
-                          {CONFIGURABLE_STAGES.includes(stage.name) && canRerunStage ? (
+                          {configurableStageList.includes(stage.name) && canRerunStage ? (
                             <button
                               type="button"
                               className="text-muted-foreground hover:text-foreground"
@@ -567,6 +571,7 @@ export default function TaskDetailPage({ params }: { params: Promise<{ id: strin
               config={cfgConfig}
               onConfigChange={(patch) => setCfgConfig((prev) => ({ ...prev, ...patch }))}
               providerOptions={providerOptions}
+              schema={schema}
               saving={configSaving}
               success={configSuccess}
               error={configError}

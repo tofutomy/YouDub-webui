@@ -148,6 +148,49 @@ export type StageConfig = {
   demucs_shifts: number
 }
 
+// 任务配置 Schema 元数据类型（由后端 /api/task-config/schema 提供）
+export type LocalizedText = {
+  zh: string
+  en: string
+}
+
+export type TaskConfigOption = {
+  value: string
+  label: LocalizedText
+  description?: LocalizedText
+  patch?: Record<string, unknown>
+  is_default?: boolean
+}
+
+export type TaskConfigFieldSchema = {
+  id: string
+  key?: string
+  keys: string[]
+  type: string
+  scope: string
+  label: LocalizedText
+  hint?: LocalizedText
+  default: unknown
+  options?: TaskConfigOption[]
+  rows?: number
+  max_length?: number
+  min?: number
+  max?: number
+  step?: number
+}
+
+export type TaskConfigStageSchema = {
+  stage: string
+  label: LocalizedText
+  fields: TaskConfigFieldSchema[]
+}
+
+export type TaskConfigSchema = {
+  version: number
+  defaults: Record<string, unknown>
+  stages: TaskConfigStageSchema[]
+}
+
 /**
  * Low-level HTTP helper.
  *
@@ -378,6 +421,10 @@ export function getTranslateProviderModels(id: string) {
   return request<{ models: string[] }>(`/api/translate-providers/${id}/models`, {
     method: "POST",
   })
+}
+
+export function getTaskConfigSchema() {
+  return request<TaskConfigSchema>("/api/task-config/schema")
 }
 
 export function finalVideoUrl(taskId: string) {
